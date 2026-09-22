@@ -97,14 +97,6 @@ local function MakeIcon()
     button.stack:SetShadowOffset(1, -1)
     button.stack:SetShadowColor(0, 0, 0, 1)
 
-    button.placeholder = button:CreateTexture(nil, "BACKGROUND")
-    button.placeholder:SetAllPoints()
-    button.placeholder:SetTexture(WHITE)
-    button.placeholder:SetVertexColor(.52, .37, .76, .4)
-    button.placeholderText = above:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    button.placeholderText:SetPoint("CENTER")
-    button.placeholderText:SetText("+")
-
     button:SetScript("OnEnter", function(self)
         local entry, item = self.entry, self.item
         if not entry then return end
@@ -182,12 +174,17 @@ end
 local function RenderIcon(button, entry, item, size, placeholder)
     button.entry, button.item = entry, item
     button:SetSize(size, size)
-    button:SetAlpha(math.max(0, math.min(1, tonumber(entry.alpha) or 1)))
-    button.placeholder:SetShown(placeholder)
-    button.placeholderText:SetShown(placeholder)
-    button.icon:SetShown(item ~= nil)
-    button.borderFrame:SetShown(item ~= nil and entry.showBorder ~= false)
+    -- An inactive, unlocked solo icon is a drag preview of the actual spell.
+    -- Keep it at 50% opacity regardless of the saved alpha setting.
+    local dragPreview = placeholder and item == nil
+    button:SetAlpha(dragPreview and .5 or math.max(0, math.min(1, tonumber(entry.alpha) or 1)))
+    button.icon:SetShown(item ~= nil or dragPreview)
+    button.borderFrame:SetShown((item ~= nil or dragPreview) and entry.showBorder ~= false)
     button.stack:SetText(item and entry.showStacks ~= false and item.count and item.count > 1 and item.count or "")
+    if dragPreview then
+        local _, icon = ns.SpellInfo(entry.spellID)
+        button.icon:SetTexture(icon or FALLBACK)
+    end
     if item then
         button.icon:SetTexture(item.icon or FALLBACK)
         SetCountdown(button.cooldown, entry)
