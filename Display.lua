@@ -270,8 +270,8 @@ local function DrawGroup(group, active)
     local occupied, visibleCount = {}, 0
     for _, id in ipairs(group.members) do
         local entry = ns.FindEntry(id)
-        if entry and entry.enabled then
-            local item = active[id]
+        local item = entry and active[id]
+        if entry and (entry.enabled or item) then
             if item then visibleCount = visibleCount + 1 end
             if item or group.layout == "FIXED" then
                 occupied[#occupied + 1] = { entry = entry, item = item,
@@ -323,7 +323,7 @@ function ns.Draw(items)
     for _, button in pairs(ns.iconFrames) do button:Hide() end
     for _, frame in pairs(ns.groupFrames) do frame:Hide() end
     for _, entry in ipairs(ns.db.tracked) do
-        if entry.enabled and not entry.groupId then DrawSolo(entry, active[entry.id]) end
+        if (entry.enabled or active[entry.id]) and not entry.groupId then DrawSolo(entry, active[entry.id]) end
     end
     for _, group in ipairs(ns.db.groups) do DrawGroup(group, active) end
     -- Empty test mode previews have no saved spell entries or groups.

@@ -3,6 +3,7 @@ local events = CreateFrame("Frame")
 ns.procWindows = {}
 ns.testMode = false
 ns.testGroupID = nil
+ns.testEntryID = nil
 
 local SCHEMA = 2 -- Keep v0.2 tracked spells and groups.
 ns.DEFAULT_GROUP_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
@@ -50,6 +51,18 @@ function ns.Refresh()
                 filtered[#filtered + 1] = item
             end
             active = filtered
+        elseif ns.testEntryID then
+            local entry = ns.FindEntry(ns.testEntryID)
+            if entry then
+                local filtered = {}
+                for _, item in ipairs(active) do
+                    if item.entry.id ~= entry.id then filtered[#filtered + 1] = item end
+                end
+                for _, item in ipairs(ns.ReadPreview(now, nil, entry.id)) do
+                    filtered[#filtered + 1] = item
+                end
+                active = filtered
+            end
         end
     end
     ns.Draw(active)
@@ -109,6 +122,7 @@ end
 function ns.RemoveEntry(id)
     local entry = ns.FindEntry(id)
     if not entry then return end
+    if ns.testEntryID == id then ns.testEntryID = nil end
     RemoveMember(ns.FindGroup(entry.groupId), id)
     for index, item in ipairs(ns.db.tracked) do
         if item.id == id then table.remove(ns.db.tracked, index); break end
@@ -224,7 +238,10 @@ end
 
 function ns.SetTest(value)
     ns.testMode = value == true
-    if ns.testMode then ns.testGroupID = nil end
+    if ns.testMode then
+        ns.testGroupID = nil
+        ns.testEntryID = nil
+    end
     ns.previewStart = ns.testMode and GetTime() or nil
     ns.Refresh()
     if ns.RefreshOptions then ns.RefreshOptions() end
@@ -233,7 +250,22 @@ end
 function ns.SetGroupTest(id, value)
     if value and not ns.FindGroup(id) then return end
     ns.testGroupID = value and id or nil
-    if value then ns.testMode = false end
+    if value then
+        ns.testMode = false
+        ns.testEntryID = nil
+    end
+    ns.previewStart = value and GetTime() or nil
+    ns.Refresh()
+    if ns.RefreshOptions then ns.RefreshOptions() end
+end
+
+function ns.SetEntryTest(id, value)
+    if value and not ns.FindEntry(id) then return end
+    ns.testEntryID = value and id or nil
+    if value then
+        ns.testMode = false
+        ns.testGroupID = nil
+    end
     ns.previewStart = value and GetTime() or nil
     ns.Refresh()
     if ns.RefreshOptions then ns.RefreshOptions() end
@@ -244,6 +276,7 @@ function ns.Reset()
     IconDB = ns.db
     ns.testMode = false
     ns.testGroupID = nil
+    ns.testEntryID = nil
     ns.ClearProcWindows()
     ns.EntriesChanged()
 end

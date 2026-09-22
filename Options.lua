@@ -3,6 +3,14 @@ local ADDON_NAME, ns = ...
 local panel, panes, testButton, closeButton, spellInput, groupInput, statusText, groupStatus
 local groupMenu, menuDismiss, menuGroupID, renamePopup, renameName, renameStatus, renameSave, renameGroupID
 local iconPopup, iconInput, iconPreview, iconStatus, iconSave, iconGroupID
+local spellMenu, menuEntryID, addPopup, addGroupID, addInput, addStatus, addTabs, addPanes
+local movePopup, moveEntryID, deletePopup, deleteEntryID, deleteLabel
+local OpenSpellMenu, OpenAddPopup, OpenMovePopup, OpenDeletePopup, RefreshAddPopup
+local addExistingPage, addSelection, addRecent, addMode = 1, {}, {}, "existing"
+local addForm = { kind = "BUFF", unit = "player", caster = "ANY", trigger = "AURA", auraKind = "BUFF" }
+local addWidgets = { rows = {}, recent = {} }
+local movePage = 1
+local MOVE_PAGE_SIZE = 6
 local activePage = "spells"
 local selectedEntryID, selectedGroupID
 local spellPage, groupPage, memberPage = 1, 1, 1
@@ -82,12 +90,16 @@ end
 
 local function CloseGroupMenu()
     if groupMenu then groupMenu:Hide() end
+    if spellMenu then spellMenu:Hide() end
     if menuDismiss then menuDismiss:Hide() end
-    menuGroupID = nil
+    menuGroupID, menuEntryID = nil, nil
 end
 
 local function SelectPage(name)
     CloseGroupMenu()
+    if addPopup then addPopup:Hide() end
+    if movePopup then movePopup:Hide() end
+    if deletePopup then deletePopup:Hide() end
     activePage = name
     if ns.RefreshOptions then ns.RefreshOptions() end
 end
@@ -179,7 +191,7 @@ local function BuildSpells(pane)
     widgets.formAura = Button(pane, "", 226, -85, 160, 26, function() CycleForm("auraKind", { "BUFF", "DEBUFF" }) end)
     Button(pane, "Add", 414, -85, 145, 26, AddSpell)
     statusText = Label(pane, "", 20, -120, 530, "GameFontHighlightSmall")
-    Label(pane, "Tracked spells — click a spell to edit", 20, -152, 530)
+    Label(pane, "Tracked spells — left-click to edit, right-click for actions", 20, -152, 550)
     for i = 1, PAGE_SIZE do
         local row = NewRow(pane, -180 - (i - 1) * 40, 540)
         row.icon = row:CreateTexture(nil, "ARTWORK")
@@ -187,20 +199,16 @@ local function BuildSpells(pane)
         row.icon:SetPoint("LEFT", 4, 0)
         row.name = Label(row, "", 40, -3, 320, "GameFontHighlight")
         row.desc = Label(row, "", 40, -20, 330, "GameFontHighlightSmall")
-        row.edit = Button(row, "", 35, -3, 327, 31, function()
+        row.arrow = Label(row, ">", 511, -8, 18, "GameFontHighlight")
+        row.hit = CreateFrame("Button", nil, row)
+        row.hit:SetAllPoints(row)
+        row.hit:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        row.hit:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        row.hit:SetScript("OnClick", function(_, mouseButton)
             local entry = ns.db.tracked[(spellPage - 1) * PAGE_SIZE + i]
-            if entry then OpenEntry(entry.id) end
-        end)
-        -- A transparent click surface still uses the standard button highlight; text is above it.
-        row.edit:SetAlpha(0.04)
-        row.edit:SetFrameLevel(row:GetFrameLevel() + 1)
-        row.toggle = Button(row, "On", 378, -5, 61, 25, function()
-            local entry = ns.db.tracked[(spellPage - 1) * PAGE_SIZE + i]
-            if entry then entry.enabled = not entry.enabled; ns.EntriesChanged() end
-        end)
-        row.remove = Button(row, "X", 448, -5, 77, 25, function()
-            local entry = ns.db.tracked[(spellPage - 1) * PAGE_SIZE + i]
-            if entry then ns.RemoveEntry(entry.id) end
+            if not entry then return end
+            if mouseButton == "RightButton" then OpenSpellMenu(row, entry.id, i)
+            else OpenEntry(entry.id) end
         end)
         widgets.spellRows[i] = row
     end
@@ -351,7 +359,7 @@ local function BuildGroupMenu()
     menuDismiss:Hide()
 
     groupMenu = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-    groupMenu:SetSize(224, 176)
+    groupMenu:SetSize(224, 224)
     groupMenu:SetFrameStrata("FULLSCREEN_DIALOG")
     groupMenu:SetFrameLevel(menuDismiss:GetFrameLevel() + 1)
     groupMenu:SetClampedToScreen(true)
@@ -367,6 +375,7 @@ local function BuildGroupMenu()
 
     local actions = {
         { title = "Edit group", run = function(id) OpenGroup(id) end },
+        { title = "Add spell", run = function(id) OpenAddPopup(id) end },
         { title = "Start test", run = function(id)
             ns.SetGroupTest(id, ns.testGroupID ~= id)
         end },
@@ -381,7 +390,8 @@ local function BuildGroupMenu()
     for i, action in ipairs(actions) do
         local b = CreateFrame("Button", nil, groupMenu)
         b:SetSize(208, 31)
-        b:SetPoint("TOPLEFT", 8, -8 - (i - 1) * 32)
+        local separatorOffset = (i > 2 and 8 or 0) + (i > 4 and 8 or 0)
+        b:SetPoint("TOPLEFT", 8, -8 - (i - 1) * 32 - separatorOffset)
         b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
         -- Text-only context menu: no decorative action icons.
         b.label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
@@ -394,15 +404,23 @@ local function BuildGroupMenu()
         end)
         action.button = b
     end
+    for _, y in ipairs({ -73, -145 }) do
+        local line = groupMenu:CreateTexture(nil, "ARTWORK")
+        line:SetTexture("Interface\\Buttons\\WHITE8X8")
+        line:SetVertexColor(.45, .37, .55, .65)
+        line:SetPoint("TOPLEFT", 11, y)
+        line:SetSize(202, 1)
+    end
     groupMenu:Hide()
 end
 
 local function OpenGroupMenu(row, groupID, rowIndex)
     local group = ns.FindGroup(groupID)
     if not group then return end
+    CloseGroupMenu()
     menuGroupID = groupID
-    groupMenu.actions[2].button.label:SetText(ns.testGroupID == groupID and "Stop test" or "Start test")
-    groupMenu.actions[3].button.label:SetText(group.locked and "Unlock position" or "Lock position")
+    groupMenu.actions[3].button.label:SetText(ns.testGroupID == groupID and "Stop test" or "Start test")
+    groupMenu.actions[4].button.label:SetText(group.locked and "Unlock position" or "Lock position")
     groupMenu:ClearAllPoints()
     if rowIndex > 3 then
         groupMenu:SetPoint("BOTTOMRIGHT", row, "TOPRIGHT", 0, -2)
@@ -411,6 +429,440 @@ local function OpenGroupMenu(row, groupID, rowIndex)
     end
     menuDismiss:Show()
     groupMenu:Show()
+end
+
+-- Shared popup style for the small, self-contained list actions.
+local function Popup(width, height)
+    local popup = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+    popup:SetSize(width, height)
+    popup:SetPoint("CENTER", panel, "CENTER")
+    popup:SetFrameStrata("FULLSCREEN_DIALOG")
+    popup:SetFrameLevel(panel:GetFrameLevel() + 85)
+    popup:EnableMouse(true)
+    popup:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    popup:SetBackdropColor(.08, .08, .10, .99)
+    popup:SetBackdropBorderColor(.58, .43, .78)
+    popup:Hide()
+    return popup
+end
+
+-- This choice moves an existing record; it never creates a second copy.
+local function RefreshMovePopup()
+    if not movePopup or not movePopup:IsShown() then return end
+    local entry = ns.FindEntry(moveEntryID)
+    if not entry then movePopup:Hide(); return end
+    local destinations = { false }
+    for _, group in ipairs(ns.db.groups) do destinations[#destinations + 1] = group.id end
+    local pages = math.max(1, math.ceil(#destinations / MOVE_PAGE_SIZE))
+    movePage = math.max(1, math.min(movePage, pages))
+    movePopup.pages:SetText(movePage .. " / " .. pages)
+    movePopup.prev:SetEnabled(movePage > 1)
+    movePopup.next:SetEnabled(movePage < pages)
+    for i, row in ipairs(movePopup.rows) do
+        local ix = (movePage - 1) * MOVE_PAGE_SIZE + i
+        local destination = destinations[ix]
+        local visible = ix <= #destinations
+        row:SetShown(visible)
+        if visible then
+            local group = destination and ns.FindGroup(destination)
+            local current = (entry.groupId or false) == destination
+            row.title:SetText((group and group.name or "Solo") .. (current and "  |cff9f7bff(Current)|r" or ""))
+            row.subtitle:SetText(group and (#group.members .. " spells") or "Independent icon")
+            row:SetEnabled(not current)
+        end
+    end
+end
+
+local function BuildMovePopup()
+    movePopup = Popup(480, 445)
+    Label(movePopup, "Move to group", 19, -14, 350, "GameFontNormalLarge")
+    Button(movePopup, "X", 437, -12, 25, 24, function() movePopup:Hide() end)
+    Label(movePopup, "Choose a destination. The spell is moved, not copied.", 20, -48, 445, "GameFontHighlightSmall")
+    movePopup.rows = {}
+    for i = 1, MOVE_PAGE_SIZE do
+        local row = CreateFrame("Button", nil, movePopup)
+        row:SetPoint("TOPLEFT", movePopup, "TOPLEFT", 20, -77 - (i - 1) * 46)
+        row:SetSize(440, 42)
+        local bg = row:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints(row)
+        bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+        bg:SetVertexColor(.18, .16, .22, .58)
+        row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        row.title = Label(row, "", 11, -4, 390, "GameFontHighlight")
+        row.subtitle = Label(row, "", 11, -22, 390, "GameFontHighlightSmall")
+        row:SetScript("OnClick", function()
+            local ix = (movePage - 1) * MOVE_PAGE_SIZE + i
+            local target = ix == 1 and false or (ns.db.groups[ix - 1] and ns.db.groups[ix - 1].id)
+            if ix > 1 and not target then return end
+            if not ns.FindEntry(moveEntryID) then movePopup:Hide(); return end
+            ns.AssignGroup(moveEntryID, target or nil)
+            movePopup:Hide()
+            if ns.RefreshOptions then ns.RefreshOptions() end
+        end)
+        movePopup.rows[i] = row
+    end
+    movePopup.prev = Button(movePopup, "<", 20, -358, 37, 24, function()
+        movePage = math.max(1, movePage - 1); RefreshMovePopup()
+    end)
+    movePopup.pages = Label(movePopup, "", 75, -362, 150, "GameFontHighlightSmall")
+    movePopup.next = Button(movePopup, ">", 204, -358, 37, 24, function()
+        movePage = movePage + 1; RefreshMovePopup()
+    end)
+    Button(movePopup, "Cancel", 20, -402, 440, 26, function() movePopup:Hide() end)
+end
+
+OpenMovePopup = function(id)
+    if not ns.FindEntry(id) then return end
+    CloseGroupMenu()
+    moveEntryID, movePage = id, 1
+    movePopup:Show()
+    RefreshMovePopup()
+end
+
+local function RefreshAddForm()
+    local typeNames = { BUFF = "Buff", DEBUFF = "Debuff", PROC = "Proc" }
+    local triggers = { AURA = "Aura", OVERPOWER = "Overpower", COUNTERATTACK = "Counterattack" }
+    addWidgets.kind:SetText("Type: " .. typeNames[addForm.kind])
+    addWidgets.unit:SetText("Unit: " .. addForm.unit)
+    addWidgets.caster:SetText("Caster: " .. (addForm.caster == "MINE" and "Mine" or "Any"))
+    addWidgets.trigger:SetText("Trigger: " .. triggers[addForm.trigger])
+    addWidgets.trigger:SetShown(addForm.kind == "PROC")
+    addWidgets.aura:SetText("Aura: " .. (addForm.auraKind == "BUFF" and "Buff" or "Debuff"))
+    addWidgets.aura:SetShown(addForm.kind == "PROC" and addForm.trigger == "AURA")
+    local aura = addForm.kind ~= "PROC" or addForm.trigger == "AURA"
+    addWidgets.unit:SetEnabled(aura)
+    addWidgets.caster:SetEnabled(aura)
+end
+
+local function CycleAddForm(field, options)
+    addForm[field] = CycleValue(addForm[field], options)
+    if field == "kind" and (addForm.kind == "BUFF" or addForm.kind == "DEBUFF") then
+        addForm.auraKind = addForm.kind
+    elseif field == "trigger" then
+        if addForm.trigger == "OVERPOWER" then addInput:SetText("7384") end
+        if addForm.trigger == "COUNTERATTACK" then addInput:SetText("19306") end
+    end
+    RefreshAddForm()
+end
+
+RefreshAddPopup = function()
+    if not addPopup or not addPopup:IsShown() then return end
+    local group = ns.FindGroup(addGroupID)
+    if not group then addPopup:Hide(); return end
+    addPopup.target:SetText("Group: " .. group.name)
+    addPanes.existing:SetShown(addMode == "existing")
+    addPanes.new:SetShown(addMode == "new")
+    addTabs.existing:SetEnabled(addMode ~= "existing")
+    addTabs.new:SetEnabled(addMode ~= "new")
+    if addMode == "existing" then
+        local candidates = {}
+        for _, entry in ipairs(ns.db.tracked) do
+            if entry.groupId ~= addGroupID then candidates[#candidates + 1] = entry end
+        end
+        local pages = math.max(1, math.ceil(#candidates / 5))
+        addExistingPage = math.max(1, math.min(addExistingPage, pages))
+        addWidgets.pages:SetText(addExistingPage .. " / " .. pages .. "   (" .. #candidates .. " available)")
+        addWidgets.prev:SetEnabled(addExistingPage > 1)
+        addWidgets.next:SetEnabled(addExistingPage < pages)
+        local count = 0
+        for entryID, chosen in pairs(addSelection) do
+            if chosen and ns.FindEntry(entryID) then count = count + 1 else addSelection[entryID] = nil end
+        end
+        addWidgets.selected:SetText(count .. " selected")
+        addWidgets.addSelected:SetEnabled(count > 0)
+        for i, row in ipairs(addWidgets.rows) do
+            local entry = candidates[(addExistingPage - 1) * 5 + i]
+            row.entryID = entry and entry.id
+            row:SetShown(entry ~= nil)
+            if entry then
+                local name, icon = ns.SpellInfo(entry.spellID)
+                row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+                row.name:SetText((name or "Unknown") .. " [" .. entry.spellID .. "]")
+                local source = ns.FindGroup(entry.groupId)
+                row.source:SetText(source and ("Group: " .. source.name) or "Solo")
+                row.mark:SetText(addSelection[entry.id] and "[x]" or "[ ]")
+            end
+        end
+    else
+        RefreshAddForm()
+        for i, row in ipairs(addWidgets.recent) do
+            local id = addRecent[i]
+            local entry = id and ns.FindEntry(id)
+            row:SetShown(entry ~= nil)
+            if entry then
+                local name, icon = ns.SpellInfo(entry.spellID)
+                row.name:SetText((name or "Unknown") .. " [" .. entry.spellID .. "]")
+                row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+            end
+        end
+    end
+end
+
+local function FinishAdd()
+    local id = addGroupID
+    addPopup:Hide()
+    if ns.FindGroup(id) then OpenGroup(id) else SelectPage("groups") end
+end
+
+local function AddSelectedEntries()
+    local ids = {}
+    for _, entry in ipairs(ns.db.tracked) do
+        if entry.groupId ~= addGroupID and addSelection[entry.id] then
+            ids[#ids + 1] = entry.id
+        end
+    end
+    for _, id in ipairs(ids) do ns.AssignGroup(id, addGroupID) end
+    addSelection = {}
+    SetStatus(addWidgets.existingStatus, #ids .. " spell(s) moved to group.", false)
+    RefreshAddPopup()
+end
+
+local function AddNewEntry()
+    local id = tonumber(addInput:GetText())
+    if not id or id < 1 or id ~= math.floor(id) then
+        SetStatus(addStatus, "Enter a valid numeric Spell ID.", true)
+        return
+    end
+    local ok, message, newID = ns.AddEntry({
+        spellID = id, kind = addForm.kind, unit = addForm.unit, caster = addForm.caster,
+        trigger = addForm.trigger, auraKind = addForm.kind == "PROC" and addForm.auraKind or addForm.kind,
+        enabled = true,
+    })
+    if not ok then
+        SetStatus(addStatus, message, true)
+        return
+    end
+    ns.AssignGroup(newID, addGroupID)
+    table.insert(addRecent, 1, newID)
+    while #addRecent > 3 do table.remove(addRecent) end
+    local group = ns.FindGroup(addGroupID)
+    local name = ns.SpellInfo(id)
+    SetStatus(addStatus, (name or ("Spell " .. id)) .. " added to " .. (group and group.name or "group") .. ".", false)
+    addInput:SetText("")
+    addInput:ClearFocus()
+    RefreshAddPopup()
+end
+
+local function BuildAddPopup()
+    addPopup = Popup(548, 506)
+    Label(addPopup, "Add spell", 20, -13, 370, "GameFontNormalLarge")
+    Button(addPopup, "X", 508, -12, 25, 24, FinishAdd)
+    addPopup.target = Label(addPopup, "", 20, -43, 500, "GameFontHighlightSmall")
+    addTabs = {}
+    addTabs.existing = Button(addPopup, "Existing spells", 20, -73, 250, 27, function()
+        addMode = "existing"; RefreshAddPopup()
+    end)
+    addTabs.new = Button(addPopup, "New spell", 278, -73, 250, 27, function()
+        addMode = "new"; RefreshAddPopup()
+    end)
+    addPanes = {}
+    for _, key in ipairs({ "existing", "new" }) do
+        local pane = CreateFrame("Frame", nil, addPopup)
+        pane:SetSize(548, 340)
+        pane:SetPoint("TOPLEFT", addPopup, "TOPLEFT", 0, -111)
+        addPanes[key] = pane
+    end
+    local existing = addPanes.existing
+    Label(existing, "Select spells to move (Solo or other groups):", 20, -4, 510, "GameFontHighlightSmall")
+    for i = 1, 5 do
+        local row = CreateFrame("Button", nil, existing)
+        row:SetPoint("TOPLEFT", existing, "TOPLEFT", 20, -30 - (i - 1) * 43)
+        row:SetSize(508, 40)
+        local bg = row:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints(row)
+        bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+        bg:SetVertexColor(.18, .16, .22, .58)
+        row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        row.mark = Label(row, "[ ]", 8, -11, 32, "GameFontHighlight")
+        row.icon = row:CreateTexture(nil, "ARTWORK")
+        row.icon:SetSize(30, 30)
+        row.icon:SetPoint("LEFT", row, "LEFT", 40, 0)
+        row.name = Label(row, "", 79, -3, 390, "GameFontHighlight")
+        row.source = Label(row, "", 79, -21, 390, "GameFontHighlightSmall")
+        row:SetScript("OnClick", function(self)
+            if not self.entryID then return end
+            addSelection[self.entryID] = not addSelection[self.entryID]
+            RefreshAddPopup()
+        end)
+        addWidgets.rows[i] = row
+    end
+    addWidgets.prev = Button(existing, "<", 20, -253, 36, 24, function()
+        addExistingPage = math.max(1, addExistingPage - 1); RefreshAddPopup()
+    end)
+    addWidgets.pages = Label(existing, "", 65, -257, 200, "GameFontHighlightSmall")
+    addWidgets.next = Button(existing, ">", 244, -253, 36, 24, function()
+        addExistingPage = addExistingPage + 1; RefreshAddPopup()
+    end)
+    addWidgets.selected = Label(existing, "0 selected", 20, -290, 235, "GameFontHighlightSmall")
+    addWidgets.addSelected = Button(existing, "Add selected", 320, -282, 208, 27, AddSelectedEntries)
+    addWidgets.existingStatus = Label(existing, "", 20, -322, 508, "GameFontHighlightSmall")
+
+    local newer = addPanes.new
+    Label(newer, "Spell ID", 20, -8)
+    addInput = CreateFrame("EditBox", nil, newer, "InputBoxTemplate")
+    addInput:SetSize(106, 25)
+    addInput:SetPoint("TOPLEFT", newer, "TOPLEFT", 25, -33)
+    addInput:SetAutoFocus(false)
+    addInput:SetNumeric(true)
+    addInput:SetMaxLetters(9)
+    addInput:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    addInput:SetScript("OnEnterPressed", AddNewEntry)
+    addWidgets.kind = Button(newer, "", 145, -33, 119, 26, function() CycleAddForm("kind", { "BUFF", "DEBUFF", "PROC" }) end)
+    addWidgets.unit = Button(newer, "", 270, -33, 119, 26, function() CycleAddForm("unit", { "player", "target", "focus", "pet" }) end)
+    addWidgets.caster = Button(newer, "", 395, -33, 132, 26, function() CycleAddForm("caster", { "ANY", "MINE" }) end)
+    addWidgets.trigger = Button(newer, "", 20, -69, 205, 26, function() CycleAddForm("trigger", { "AURA", "OVERPOWER", "COUNTERATTACK" }) end)
+    addWidgets.aura = Button(newer, "", 235, -69, 155, 26, function() CycleAddForm("auraKind", { "BUFF", "DEBUFF" }) end)
+    addStatus = Label(newer, "", 20, -109, 508, "GameFontHighlightSmall")
+    Label(newer, "Recently added — click Edit for individual settings", 20, -147, 508, "GameFontNormal")
+    for i = 1, 3 do
+        local row = NewRow(newer, -171 - (i - 1) * 40, 508)
+        row:SetHeight(36)
+        row.icon = row:CreateTexture(nil, "ARTWORK")
+        row.icon:SetPoint("LEFT", 5, 0)
+        row.icon:SetSize(29, 29)
+        row.name = Label(row, "", 40, -10, 340, "GameFontHighlight")
+        row.edit = Button(row, "Edit", 408, -5, 87, 25, function()
+            local id = addRecent[i]
+            if id and ns.FindEntry(id) then
+                addPopup:Hide()
+                OpenEntry(id)
+            end
+        end)
+        addWidgets.recent[i] = row
+    end
+    Button(newer, "Add", 320, -310, 208, 27, AddNewEntry)
+    Button(addPopup, "Done", 20, -460, 508, 28, FinishAdd)
+end
+
+OpenAddPopup = function(id)
+    if not ns.FindGroup(id) then return end
+    CloseGroupMenu()
+    addGroupID, addMode, addExistingPage = id, "existing", 1
+    addSelection, addRecent = {}, {}
+    addInput:SetText("")
+    SetStatus(addStatus, "", false)
+    SetStatus(addWidgets.existingStatus, "", false)
+    addPopup:Show()
+    RefreshAddPopup()
+end
+
+local function BuildDeletePopup()
+    deletePopup = Popup(475, 198)
+    Label(deletePopup, "Delete spell", 20, -14, 370, "GameFontNormalLarge")
+    Button(deletePopup, "X", 434, -12, 25, 24, function() deletePopup:Hide() end)
+    deleteLabel = Label(deletePopup, "", 20, -58, 430, "GameFontHighlight")
+    Label(deletePopup, "This also removes its individual settings.", 20, -88, 430, "GameFontHighlightSmall")
+    Button(deletePopup, "Delete", 20, -152, 210, 27, function()
+        local id = deleteEntryID
+        deletePopup:Hide()
+        if id and ns.FindEntry(id) then
+            ns.RemoveEntry(id)
+            if activePage == "entry" and selectedEntryID == id then
+                selectedEntryID = nil
+                SelectPage("spells")
+            end
+        end
+    end)
+    Button(deletePopup, "Cancel", 244, -152, 210, 27, function() deletePopup:Hide() end)
+end
+
+OpenDeletePopup = function(id)
+    local entry = ns.FindEntry(id)
+    if not entry then return end
+    CloseGroupMenu()
+    deleteEntryID = id
+    local name = ns.SpellInfo(entry.spellID)
+    deleteLabel:SetText("Delete " .. (name or ("Spell " .. entry.spellID)) .. " [" .. entry.spellID .. "]?")
+    deletePopup:Show()
+end
+
+local function BuildSpellMenu()
+    spellMenu = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    spellMenu:SetSize(224, 224)
+    spellMenu:SetFrameStrata("FULLSCREEN_DIALOG")
+    spellMenu:SetFrameLevel(menuDismiss:GetFrameLevel() + 1)
+    spellMenu:SetClampedToScreen(true)
+    spellMenu:EnableMouse(true)
+    spellMenu:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 13,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    spellMenu:SetBackdropColor(.08, .08, .10, .99)
+    spellMenu:SetBackdropBorderColor(.58, .43, .78)
+    local actions = {
+        { title = "Edit spell", run = function(id) OpenEntry(id) end },
+        { title = "Move to group", run = function(id) OpenMovePopup(id) end },
+        { title = "Start test", run = function(id)
+            ns.SetEntryTest(id, ns.testEntryID ~= id)
+        end },
+        { title = "Unlock position", run = function(id)
+            local entry = ns.FindEntry(id)
+            if not entry then return end
+            local item = ns.FindGroup(entry.groupId) or entry
+            item.locked = not item.locked
+            ns.Refresh()
+            ns.RefreshOptions()
+        end },
+        { title = "Disable spell", run = function(id)
+            local entry = ns.FindEntry(id)
+            if entry then entry.enabled = not entry.enabled; ns.EntriesChanged() end
+        end },
+        { title = "Delete spell", run = OpenDeletePopup },
+    }
+    spellMenu.actions = actions
+    for i, action in ipairs(actions) do
+        local b = CreateFrame("Button", nil, spellMenu)
+        b:SetSize(208, 31)
+        local offset = (i > 2 and 8 or 0) + (i > 4 and 8 or 0)
+        b:SetPoint("TOPLEFT", 8, -8 - (i - 1) * 32 - offset)
+        b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        b.label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        b.label:SetPoint("LEFT", b, "LEFT", 12, 0)
+        b.label:SetText(action.title)
+        b:SetScript("OnClick", function()
+            local id = menuEntryID
+            CloseGroupMenu()
+            if id and ns.FindEntry(id) then action.run(id) end
+        end)
+        action.button = b
+    end
+    for _, y in ipairs({ -73, -145 }) do
+        local line = spellMenu:CreateTexture(nil, "ARTWORK")
+        line:SetTexture("Interface\\Buttons\\WHITE8X8")
+        line:SetVertexColor(.45, .37, .55, .65)
+        line:SetPoint("TOPLEFT", 11, y)
+        line:SetSize(202, 1)
+    end
+    spellMenu:Hide()
+end
+
+OpenSpellMenu = function(row, id, rowIndex)
+    local entry = ns.FindEntry(id)
+    if not entry then return end
+    CloseGroupMenu()
+    menuEntryID = id
+    local group = ns.FindGroup(entry.groupId)
+    local item = group or entry
+    spellMenu.actions[3].button.label:SetText(ns.testEntryID == id and "Stop test" or "Start test")
+    spellMenu.actions[4].button.label:SetText(group
+        and (item.locked and "Unlock group position" or "Lock group position")
+        or (item.locked and "Unlock position" or "Lock position"))
+    spellMenu.actions[5].button.label:SetText(entry.enabled and "Disable spell" or "Enable spell")
+    spellMenu:ClearAllPoints()
+    if rowIndex > 3 then
+        spellMenu:SetPoint("BOTTOMRIGHT", row, "TOPRIGHT", 0, -2)
+    else
+        spellMenu:SetPoint("TOPRIGHT", row, "BOTTOMRIGHT", 0, 2)
+    end
+    menuDismiss:Show()
+    spellMenu:Show()
 end
 
 local function BuildGroups(pane)
@@ -463,7 +915,7 @@ local function BuildGroups(pane)
     widgets.groupNext = Button(pane, ">", 215, -412, 36, 24, function()
         groupPage = groupPage + 1; ns.RefreshOptions()
     end)
-    Label(pane, "Move spells into a group from their own settings page.", 20, -450, 545, "GameFontHighlightSmall")
+    Label(pane, "Right-click a group to add or move spells.", 20, -450, 545, "GameFontHighlightSmall")
 end
 
 local function ChangeEntry(field, options)
@@ -523,10 +975,7 @@ local function BuildEntry(pane)
     end)
     widgets.entryHint = Label(pane, "Unlock and drag the icon to set its position.", 20, -372, 540, "GameFontHighlightSmall")
     Button(pane, "Remove spell", 20, -426, 200, 28, function()
-        local id = selectedEntryID
-        selectedEntryID = nil
-        ns.RemoveEntry(id)
-        SelectPage("spells")
+        if selectedEntryID then OpenDeletePopup(selectedEntryID) end
     end)
     Label(pane, "To edit Spell ID, remove and add the spell again.", 240, -433, 325, "GameFontHighlightSmall")
 end
@@ -561,7 +1010,10 @@ local function BuildGroup(pane)
         local group = ns.FindGroup(selectedGroupID)
         if group then group.groupSize = value; ns.Refresh() end
     end)
-    widgets.memberHeading = Label(pane, "Spells in group", 20, -266, 520)
+    widgets.memberHeading = Label(pane, "Spells in group", 20, -266, 340)
+    Button(pane, "Add spell", 408, -261, 151, 24, function()
+        if selectedGroupID then OpenAddPopup(selectedGroupID) end
+    end)
     for i = 1, MEMBER_PAGE_SIZE do
         local row = NewRow(pane, -288 - (i - 1) * 36, 540)
         row:SetHeight(33)
@@ -615,7 +1067,9 @@ local function RefreshSpells()
             row.name:SetText((name or "Unknown") .. " |cff9f7bff[" .. entry.spellID .. "]|r")
             local group = ns.FindGroup(entry.groupId)
             row.desc:SetText(entry.kind .. " · " .. (group and ("Group: " .. group.name) or (entry.unit .. " · " .. entry.auraKind .. " · " .. entry.caster)))
-            row.toggle:SetText(entry.enabled and "On" or "Off")
+            if not entry.enabled then
+                row.desc:SetText(row.desc:GetText() .. " · Disabled")
+            end
         end
     end
 end
@@ -729,6 +1183,7 @@ function ns.RefreshOptions()
         closeButton:SetSize(547, 28)
     end
     testButton:SetText(ns.testMode and "Stop test" or "Start test")
+    if addPopup and addPopup:IsShown() and RefreshAddPopup then RefreshAddPopup() end
 end
 
 local function BuildPanel()
@@ -750,7 +1205,7 @@ local function BuildPanel()
     })
     panel:SetBackdropColor(.08, .08, .10, .97)
     panel:SetBackdropBorderColor(.45, .38, .60)
-    local title = Label(panel, (Meta("Title") or "Icon") .. " |cff9f7bffv" .. (Meta("Version") or "0.3.1") .. "|r", 181, -14, 275, "GameFontNormalLarge")
+    local title = Label(panel, (Meta("Title") or "Icon") .. " |cff9f7bffv" .. (Meta("Version") or "0.4.0") .. "|r", 181, -14, 275, "GameFontNormalLarge")
     title:SetJustifyH("CENTER")
     Label(panel, "Author: " .. (Meta("Author") or "Hooch"), 19, -46, 300, "GameFontHighlightSmall")
     Button(panel, "X", 550, -12, 27, 25, function() panel:Hide() end)
@@ -767,6 +1222,10 @@ local function BuildPanel()
     BuildRenamePopup()
     BuildIconPopup()
     BuildGroupMenu()
+    BuildSpellMenu()
+    BuildMovePopup()
+    BuildAddPopup()
+    BuildDeletePopup()
     BuildGroups(panes.groups)
     BuildEntry(panes.entry)
     BuildGroup(panes.group)
@@ -776,6 +1235,9 @@ local function BuildPanel()
         CloseGroupMenu()
         if renamePopup then renamePopup:Hide() end
         if iconPopup then iconPopup:Hide() end
+        if movePopup then movePopup:Hide() end
+        if addPopup then addPopup:Hide() end
+        if deletePopup then deletePopup:Hide() end
     end)
     panel:SetScript("OnShow", ns.RefreshOptions)
     ns.RefreshOptions()
