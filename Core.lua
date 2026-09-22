@@ -108,6 +108,29 @@ function ns.AddEntry(data)
     return true, "Added " .. name .. ".", entry.id
 end
 
+-- Replace the tracked spell without changing its entry ID, group, position or appearance.
+function ns.UpdateEntrySpell(id, newSpellID)
+    local entry = ns.FindEntry(id)
+    if not entry then return false, "Spell entry not found." end
+    newSpellID = tonumber(newSpellID)
+    if not newSpellID or newSpellID < 1 or newSpellID ~= math.floor(newSpellID) then
+        return false, "Enter a valid numeric Spell ID."
+    end
+    local name = ns.SpellInfo(newSpellID)
+    if not name then return false, "Unknown Spell ID (try another rank)." end
+    if newSpellID == entry.spellID then return true, "Spell ID unchanged." end
+    for _, old in ipairs(ns.db.tracked) do
+        if old.id ~= id and old.spellID == newSpellID and old.kind == entry.kind
+            and (entry.kind == "COOLDOWN"
+                or (old.unit == entry.unit and old.caster == entry.caster)) then
+            return false, "That tracking rule already exists."
+        end
+    end
+    entry.spellID = newSpellID
+    ns.EntriesChanged()
+    return true, "Now tracking " .. name .. "."
+end
+
 function ns.RemoveEntry(id)
     local entry = ns.FindEntry(id)
     if not entry then return end

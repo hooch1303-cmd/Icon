@@ -3,11 +3,6 @@ local ADDON_NAME, ns = ...
 local WHITE = "Interface\\Buttons\\WHITE8X8"
 local BORDER = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\Border_squared"
 local FALLBACK = "Interface\\Icons\\INV_Misc_QuestionMark"
-local BORDER_COLORS = {
-    BUFF = { .35, .80, .45 },
-    DEBUFF = { .96, .32, .31 },
-    COOLDOWN = { .35, .62, .98 },
-}
 
 local function OmniCCLoaded()
     if C_AddOns and C_AddOns.IsAddOnLoaded then return C_AddOns.IsAddOnLoaded("OmniCC") end
@@ -187,6 +182,7 @@ end
 local function RenderIcon(button, entry, item, size, placeholder)
     button.entry, button.item = entry, item
     button:SetSize(size, size)
+    button:SetAlpha(math.max(0, math.min(1, tonumber(entry.alpha) or 1)))
     button.placeholder:SetShown(placeholder)
     button.placeholderText:SetShown(placeholder)
     button.icon:SetShown(item ~= nil)
@@ -194,8 +190,6 @@ local function RenderIcon(button, entry, item, size, placeholder)
     button.stack:SetText(item and entry.showStacks ~= false and item.count and item.count > 1 and item.count or "")
     if item then
         button.icon:SetTexture(item.icon or FALLBACK)
-        local color = BORDER_COLORS[entry.kind] or BORDER_COLORS.BUFF
-        button.border:SetVertexColor(color[1], color[2], color[3], .9)
         SetCountdown(button.cooldown, entry)
         if item.duration and item.duration > 0 then
             local start = item.start or 0

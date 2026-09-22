@@ -30,7 +30,7 @@ function ns.NormalizeEntry(entry)
             and entry.cooldownMode or "ON_COOLDOWN",
         enabled = entry.enabled ~= false, groupId = nil,
         point = "CENTER", relativePoint = "CENTER", x = 0, y = -140,
-        size = 36, showCountdown = true, showBorder = true,
+        size = 36, alpha = 1, showCountdown = true, showBorder = true,
         showStacks = true, locked = true,
     }
 end

@@ -6,6 +6,15 @@ Standalone icon tracker by Hooch for **WoW TBC Classic Anniversary (Interface 20
 
 Extract the ZIP with `Icon.toc` at `C:\Users\GAME\Documents\Icon\Icon.toc`, or install it into your WoW `_anniversary_\Interface\AddOns\Icon` directory. If you use a directory junction, replace the files in **Documents**; keep the junction in place. Then enter `/reload` and `/icon`.
 
+## v0.5.3 — Unified icon editor
+
+- One editor for Solo and Group icons: editable Spell ID (Enter / Apply ID), Type, Unit/Caster or Cooldown Display mode, and a real Group dropdown.
+- The header's live preview stays visible even when the tracked effect is inactive. It immediately reflects the spell texture, custom border, icon size and alpha.
+- Icon alpha (0–100%) affects the whole in-game icon, including its border and countdown, and is saved per icon. The border texture uses its original color without Buff/Debuff/Cooldown tinting.
+- Uniform-sized groups keep determining the rendered size; the personal icon size remains editable and saved for later Solo / Individual mode.
+- Enable/Disable, individual Test, group/solo position lock and removal are available from the same editor. Glow is deliberately deferred.
+- To change a Spell ID, a valid known spell must be supplied. Duplicate tracking rules are rejected and the existing entry/group/position/appearance are kept.
+
 ## v0.5.2 — Cooldown display modes
 
 Add a learned player ability with **Type: Cooldown**. Each new entry defaults to **On Cooldown**. Open the spell's individual settings to choose **Display mode**:

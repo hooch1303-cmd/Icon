@@ -58,14 +58,14 @@ local function Checkbox(parent, caption, x, y, callback)
     return check, label
 end
 
-local function Slider(parent, title, x, y, low, high, callback)
+local function Slider(parent, title, x, y, low, high, callback, width)
     local slider = CreateFrame("Slider", nil, parent, "OptionsSliderTemplate")
     slider:SetPoint("TOPLEFT", x, y)
-    slider:SetSize(480, 18)
+    slider:SetSize(width or 480, 18)
     slider:SetMinMaxValues(low, high)
     slider:SetValueStep(1)
     if slider.SetObeyStepOnDrag then slider:SetObeyStepOnDrag(true) end
-    local caption = Label(parent, title, x, y + 30, 490)
+    local caption = Label(parent, title, x, y + 30, width or 490)
     slider.updating = false
     slider:SetScript("OnValueChanged", function(self, value)
         if self.updating then return end
@@ -112,7 +112,7 @@ local function Dropdown(parent, x, y, width, caption, options, getValue, onPick)
     drop.caption = Label(parent, caption, x + 1, y + 22, width - 4, "GameFontHighlightSmall")
     UIDropDownMenu_Initialize(drop, function(_, level)
         if level ~= 1 then return end
-        for _, option in ipairs(options) do
+        for _, option in ipairs(type(options) == "function" and options() or options) do
             local value, label = option[2], option[1]
             local info = UIDropDownMenu_CreateInfo()
             info.text, info.value = label, value
@@ -127,7 +127,7 @@ local function Dropdown(parent, x, y, width, caption, options, getValue, onPick)
     function drop:Sync(enabled)
         local value = getValue()
         local name = "?"
-        for _, option in ipairs(options) do
+        for _, option in ipairs(type(options) == "function" and options() or options) do
             if option[2] == value then name = option[1]; break end
         end
         UIDropDownMenu_SetText(self, name)
@@ -163,6 +163,11 @@ end
 
 local function OpenEntry(id)
     if not ns.FindEntry(id) then return end
+    if widgets.entryIDInput then
+        widgets.entryIDInput:ClearFocus()
+        widgets.entryIDInput:SetText(tostring(ns.FindEntry(id).spellID))
+    end
+    SetStatus(widgets.entryStatus, "")
     selectedEntryID = id
     SelectPage("entry")
 end
@@ -971,58 +976,131 @@ local function ChangeEntry(field, value)
     ns.EntriesChanged()
 end
 
+local function CommitEntrySpellID()
+    local entry = ns.FindEntry(selectedEntryID)
+    if not entry then return end
+    local id = tonumber(widgets.entryIDInput:GetText())
+    widgets.entryIDInput:ClearFocus()
+    local ok, message = ns.UpdateEntrySpell(entry.id, id)
+    SetStatus(widgets.entryStatus, message, not ok)
+    if ok then widgets.entryIDInput:SetText(tostring(entry.spellID)) end
+end
+
+local function EntryGroupOptions()
+    local options = { { "Solo", false } }
+    for _, group in ipairs(ns.db.groups) do
+        options[#options + 1] = { group.name, group.id }
+    end
+    return options
+end
+
+-- One editor for both solo icons and group members.
 local function BuildEntry(pane)
-    widgets.entryIcon = pane:CreateTexture(nil, "ARTWORK")
-    widgets.entryIcon:SetSize(36, 36)
-    widgets.entryIcon:SetPoint("TOPLEFT", 22, -6)
-    widgets.entryTitle = Label(pane, "", 68, -7, 420, "GameFontNormalLarge")
-    widgets.entryID = Label(pane, "", 69, -30, 405, "GameFontHighlightSmall")
-    widgets.entryKind = Dropdown(pane, 20, -62, 166, "Type", TYPE_OPTIONS,
+    local preview = CreateFrame("Frame", nil, pane)
+    preview:SetSize(106, 106)
+    preview:SetPoint("TOPLEFT", pane, "TOPLEFT", 20, -3)
+    local backing = preview:CreateTexture(nil, "BACKGROUND")
+    backing:SetAllPoints()
+    backing:SetTexture("Interface\\Buttons\\WHITE8X8")
+    backing:SetVertexColor(.15, .14, .18, .65)
+
+    widgets.entryPreview = CreateFrame("Frame", nil, preview)
+    widgets.entryPreview:SetPoint("CENTER", preview, "CENTER")
+    widgets.entryPreview:SetSize(36, 36)
+    widgets.entryIcon = widgets.entryPreview:CreateTexture(nil, "ARTWORK")
+    widgets.entryIcon:SetAllPoints()
+    widgets.entryIcon:SetTexCoord(.07, .93, .07, .93)
+    widgets.entryPreviewBorder = widgets.entryPreview:CreateTexture(nil, "OVERLAY")
+    widgets.entryPreviewBorder:SetAllPoints()
+    widgets.entryPreviewBorder:SetTexture("Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\Border_squared")
+
+    widgets.entryTitle = Label(pane, "", 145, -9, 265, "GameFontNormalLarge")
+    widgets.entryEnabled, widgets.entryEnabledLabel = Checkbox(pane, "Enabled", 429, -5, function(checked)
+        local entry = ns.FindEntry(selectedEntryID)
+        if entry then entry.enabled = checked; ns.EntriesChanged() end
+    end)
+    widgets.entryEnabledLabel:SetWidth(95)
+    Label(pane, "Spell ID", 145, -39, 115, "GameFontHighlightSmall")
+    widgets.entryIDInput = CreateFrame("EditBox", nil, pane, "InputBoxTemplate")
+    widgets.entryIDInput:SetSize(116, 25)
+    widgets.entryIDInput:SetPoint("TOPLEFT", 150, -57)
+    widgets.entryIDInput:SetAutoFocus(false)
+    widgets.entryIDInput:SetNumeric(true)
+    widgets.entryIDInput:SetMaxLetters(9)
+    widgets.entryIDInput:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+        local entry = ns.FindEntry(selectedEntryID)
+        if entry then self:SetText(tostring(entry.spellID)) end
+    end)
+    widgets.entryIDInput:SetScript("OnEnterPressed", CommitEntrySpellID)
+    Button(pane, "Apply ID", 285, -57, 102, 26, CommitEntrySpellID)
+    widgets.entryStatus = Label(pane, "", 145, -89, 417, "GameFontHighlightSmall")
+
+    Label(pane, "Tracking", 20, -120, 525, "GameFontNormalLarge")
+    widgets.entryKind = Dropdown(pane, 20, -164, 166, "Type", TYPE_OPTIONS,
         function() local e = ns.FindEntry(selectedEntryID); return e and e.kind end,
         function(v) ChangeEntry("kind", v) end)
-    widgets.entryUnit = Dropdown(pane, 195, -62, 166, "Unit", UNIT_OPTIONS,
+    widgets.entryUnit = Dropdown(pane, 198, -164, 166, "Unit", UNIT_OPTIONS,
         function() local e = ns.FindEntry(selectedEntryID); return e and e.unit end,
         function(v) ChangeEntry("unit", v) end)
-    widgets.entryCaster = Dropdown(pane, 370, -62, 190, "Caster", CASTER_OPTIONS,
+    widgets.entryCaster = Dropdown(pane, 378, -164, 182, "Caster", CASTER_OPTIONS,
         function() local e = ns.FindEntry(selectedEntryID); return e and e.caster end,
         function(v) ChangeEntry("caster", v) end)
-    widgets.entryCooldown = Dropdown(pane, 20, -99, 300, "Display mode", MODE_OPTIONS,
+    widgets.entryCooldown = Dropdown(pane, 198, -164, 362, "Display mode", MODE_OPTIONS,
         function() local e = ns.FindEntry(selectedEntryID); return e and (e.cooldownMode or "ON_COOLDOWN") end,
         function(v) ChangeEntry("cooldownMode", v) end)
-    widgets.entryGroup = Button(pane, "", 20, -140, 540, 29, function()
+
+    Label(pane, "Appearance", 20, -206, 525, "GameFontNormalLarge")
+    widgets.entryCount, widgets.entryCountLabel = Checkbox(pane, "Cooldown Count", 20, -231, function(checked)
+        local entry = ns.FindEntry(selectedEntryID)
+        if entry then entry.showCountdown = checked; ns.EntriesChanged() end
+    end)
+    widgets.entryCountLabel:SetWidth(160)
+    widgets.entryBorder, widgets.entryBorderLabel = Checkbox(pane, "Border", 214, -231, function(checked)
+        local entry = ns.FindEntry(selectedEntryID)
+        if entry then entry.showBorder = checked; ns.EntriesChanged() end
+    end)
+    widgets.entryBorderLabel:SetWidth(100)
+    widgets.entryStacks, widgets.entryStacksLabel = Checkbox(pane, "Show stacks", 378, -231, function(checked)
+        local entry = ns.FindEntry(selectedEntryID)
+        if entry then entry.showStacks = checked; ns.EntriesChanged() end
+    end)
+    widgets.entryStacksLabel:SetWidth(140)
+    widgets.entrySize = Slider(pane, "Icon size", 28, -308, 18, 100, function(value)
+        local entry = ns.FindEntry(selectedEntryID)
+        if entry then entry.size = value; ns.EntriesChanged() end
+    end, 233)
+    widgets.entryAlpha = Slider(pane, "Icon alpha (%)", 306, -308, 0, 100, function(value)
+        local entry = ns.FindEntry(selectedEntryID)
+        if entry then entry.alpha = value / 100; ns.EntriesChanged() end
+    end, 233)
+
+    Label(pane, "Placement", 20, -342, 525, "GameFontNormalLarge")
+    widgets.entryGroup = Dropdown(pane, 20, -386, 310, "Group", EntryGroupOptions,
+        function()
+            local entry = ns.FindEntry(selectedEntryID)
+            return entry and (entry.groupId or false)
+        end,
+        function(groupID)
+            local entry = ns.FindEntry(selectedEntryID)
+            if entry then ns.AssignGroup(entry.id, groupID or nil) end
+        end)
+    widgets.entryLock, widgets.entryLockLabel = Checkbox(pane, "Lock position", 343, -383, function(checked)
         local entry = ns.FindEntry(selectedEntryID)
         if not entry then return end
-        local groups = { false }
-        for _, group in ipairs(ns.db.groups) do groups[#groups + 1] = group.id end
-        local current = entry.groupId or false
-        local nextID = CycleValue(current, groups)
-        ns.AssignGroup(entry.id, nextID or nil)
+        local group = ns.FindGroup(entry.groupId)
+        if group then group.locked = checked else entry.locked = checked end
+        ns.EntriesChanged()
     end)
-    widgets.entryCount = Checkbox(pane, "Cooldown Count", 20, -188, function(checked)
+    widgets.entryLockLabel:SetWidth(185)
+    widgets.entryHint = Label(pane, "", 20, -421, 540, "GameFontHighlightSmall")
+    widgets.entryTest = Button(pane, "Test icon", 20, -445, 168, 28, function()
         local entry = ns.FindEntry(selectedEntryID)
-        if entry then entry.showCountdown = checked; ns.Refresh() end
+        if entry then ns.SetEntryTest(entry.id, ns.testEntryID ~= entry.id) end
     end)
-    widgets.entryBorder = Checkbox(pane, "Border", 300, -188, function(checked)
-        local entry = ns.FindEntry(selectedEntryID)
-        if entry then entry.showBorder = checked; ns.Refresh() end
-    end)
-    widgets.entryStacks = Checkbox(pane, "Show stacks / charges", 20, -227, function(checked)
-        local entry = ns.FindEntry(selectedEntryID)
-        if entry then entry.showStacks = checked; ns.Refresh() end
-    end)
-    widgets.entryLock, widgets.entryLockLabel = Checkbox(pane, "Lock position (solo only)", 300, -227, function(checked)
-        local entry = ns.FindEntry(selectedEntryID)
-        if entry and not entry.groupId then entry.locked = checked; ns.Refresh() end
-    end)
-    widgets.entrySize = Slider(pane, "Icon size", 28, -333, 18, 100, function(value)
-        local entry = ns.FindEntry(selectedEntryID)
-        if entry then entry.size = value; ns.Refresh() end
-    end)
-    widgets.entryHint = Label(pane, "Unlock and drag the icon to set its position.", 20, -372, 540, "GameFontHighlightSmall")
-    Button(pane, "Remove spell", 20, -426, 200, 28, function()
+    Button(pane, "Remove spell", 390, -445, 170, 28, function()
         if selectedEntryID then OpenDeletePopup(selectedEntryID) end
     end)
-    Label(pane, "To edit Spell ID, remove and add the spell again.", 240, -433, 325, "GameFontHighlightSmall")
 end
 
 local function BuildGroup(pane)
@@ -1198,9 +1276,19 @@ local function RefreshEntry()
     local entry = ns.FindEntry(selectedEntryID)
     if not entry then SelectPage("spells"); return end
     local name, icon = ns.SpellInfo(entry.spellID)
-    widgets.entryIcon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+    local group = ns.FindGroup(entry.groupId)
+    widgets.entryIcon:SetTexture(icon or FALLBACK_ICON)
     widgets.entryTitle:SetText(name or "Unknown spell")
-    widgets.entryID:SetText("Spell ID: " .. entry.spellID)
+    widgets.entryEnabled:SetChecked(entry.enabled ~= false)
+    if not widgets.entryIDInput:HasFocus() then
+        widgets.entryIDInput:SetText(tostring(entry.spellID))
+    end
+    -- The preview is independent of whether this spell is currently active.
+    -- In Uniform groups it reflects the actual group size, not the saved solo size.
+    local size = group and group.sizeMode == "UNIFORM" and group.groupSize or entry.size or 36
+    widgets.entryPreview:SetSize(size, size)
+    widgets.entryPreview:SetAlpha(math.max(0, math.min(1, tonumber(entry.alpha) or 1)))
+    widgets.entryPreviewBorder:SetShown(entry.showBorder ~= false)
     widgets.entryKind:Sync()
     local usesAura = entry.kind ~= "COOLDOWN"
     widgets.entryUnit:SetShown(usesAura)
@@ -1214,19 +1302,24 @@ local function RefreshEntry()
     widgets.entryCooldown:SetShown(not usesAura)
     widgets.entryCooldown.caption:SetShown(not usesAura)
     if not usesAura then widgets.entryCooldown:Sync() end
-    local group = ns.FindGroup(entry.groupId)
-    widgets.entryGroup:SetText("Group: " .. (group and group.name or "Solo") .. "   (click to change)")
-    widgets.entryCount:SetChecked(entry.showCountdown)
-    widgets.entryBorder:SetChecked(entry.showBorder)
-    widgets.entryStacks:SetChecked(entry.showStacks)
-    widgets.entryStacks:SetShown(entry.kind ~= "COOLDOWN")
-    widgets.entryCount:SetEnabled(entry.kind ~= "COOLDOWN" or entry.cooldownMode ~= "READY")
+    widgets.entryGroup:Sync()
+    widgets.entryCount:SetChecked(entry.showCountdown ~= false)
+    widgets.entryBorder:SetChecked(entry.showBorder ~= false)
+    widgets.entryStacks:SetChecked(entry.showStacks ~= false)
+    local showCount = usesAura or entry.cooldownMode ~= "READY"
+    widgets.entryCount:SetShown(showCount)
+    widgets.entryCountLabel:SetShown(showCount)
+    widgets.entryStacks:SetShown(usesAura)
+    widgets.entryStacksLabel:SetShown(usesAura)
     widgets.entryLock:SetChecked(group and group.locked or (not group and entry.locked))
-    widgets.entryLock:SetEnabled(not group)
-    widgets.entryLockLabel:SetText(group and "Lock position (controlled by group)" or "Lock position")
-    widgets.entrySize:Sync(entry.size)
-    widgets.entrySize:SetEnabled(not group or group.sizeMode == "INDIVIDUAL")
-    widgets.entryHint:SetText(group and "Drag the group. Icon size is overridden in Uniform mode." or "Unlock and drag this icon to set its position.")
+    widgets.entryLockLabel:SetText(group and "Lock group position" or "Lock position")
+    widgets.entrySize:Sync(entry.size or 36)
+    widgets.entryAlpha:Sync(math.floor((tonumber(entry.alpha) or 1) * 100 + .5))
+    widgets.entryHint:SetText(group and group.sizeMode == "UNIFORM"
+        and "Uniform size comes from the group. Personal icon size is saved."
+        or (group and "Move the whole group after unlocking its position."
+            or "Unlock and drag this icon to set its position."))
+    widgets.entryTest:SetText(ns.testEntryID == entry.id and "Stop test" or "Test icon")
 end
 
 local function RefreshGroup()
