@@ -140,6 +140,7 @@ local function OpenSpell(id)
     if ns.testSpellID ~= id then ns.testSpellID = nil end
     selectedSpell = id
     confirmSpell = nil
+    if widgets and widgets.entryStatus then widgets.entryStatus:SetText("") end
     SetPage("entry")
 end
 
@@ -221,21 +222,78 @@ local function BuildGroups(pane)
     end)
 end
 
+-- Keep all editor changes inside Options.lua. The database API is unchanged.
+-- Replacing a Spell ID transfers its saved appearance, Solo position, and
+-- group membership rather than deleting the old entry and resetting its data.
 local function CommitID(text)
+    local oldID = selectedSpell
     local settings = SelectedSettings()
-    if not settings then return end
-    -- Changing the tracked Spell ID requires a different DB action; do not
-    -- silently overwrite a key or discard the old settings from this editor.
-    if tostring(selectedSpell) ~= tostring(text) then
-        widgets.entryStatus:SetText("To change ID, add the new spell and remove the old one.")
+    if not oldID or not settings then return end
+    local newID = tonumber(text)
+    if not newID or newID < 1 or newID ~= math.floor(newID) then
+        widgets.entryStatus:SetText("Enter a positive numeric Spell ID.")
+        return
     end
+    if newID == oldID then
+        widgets.entryStatus:SetText("")
+        return
+    end
+    if not ns.reactiveSpells[newID] then
+        widgets.entryStatus:SetText("Spell ID is not supported by Spell React.")
+        return
+    end
+    if not ns.GetSpellInfo(newID) then
+        widgets.entryStatus:SetText("Unknown Spell ID.")
+        return
+    end
+    if ns.GetIconSettings(newID) then
+        widgets.entryStatus:SetText("This Spell ID is already being tracked.")
+        return
+    end
+    -- These are the same v2 database records that ns.AddReact/RemoveReact use.
+    for i, id in ipairs(ns.db.tracked) do
+        if id == oldID then ns.db.tracked[i] = newID; break end
+    end
+    local group = ns.GetSpellGroup(oldID)
+    if group then
+        for i, id in ipairs(group.members) do
+            if id == oldID then group.members[i] = newID; break end
+        end
+    end
+    ns.db.icons[oldID] = nil
+    ns.db.icons[newID] = settings
+    if ns.testSpellID == oldID then ns.testSpellID = newID end
+    selectedSpell, confirmSpell = newID, nil
+    widgets.entryStatus:SetText("")
+    ns.Refresh()
+    Changed()
 end
 
+local function ApplyIcon(text)
+    local settings = SelectedSettings()
+    if not settings then return end
+    if text == "" then
+        settings.customIcon = nil
+        widgets.entryStatus:SetText("")
+        Changed()
+        return
+    end
+    local id = tonumber(text)
+    if not id or id < 1 or id ~= math.floor(id) then
+        widgets.entryStatus:SetText("Enter a numeric FileDataID, or clear the field for default.")
+        return
+    end
+    settings.customIcon = id
+    widgets.entryStatus:SetText("")
+    Changed()
+end
+
+-- One compact editor: same composition as the original Icon 0.5.3 page.
+-- The Spells/Groups tabs and global lock are hidden while this page is open.
 local function BuildEntry(pane)
-    widgets.entryTitle = Label(pane, "", 20, 1, 540, "GameFontNormalLarge")
     widgets.preview = CreateFrame("Frame", nil, pane)
-    widgets.preview:SetPoint("TOPLEFT", pane, "TOPLEFT", 25, -50)
-    widgets.preview:SetSize(64, 64)
+    widgets.preview:SetPoint("TOPLEFT", pane, "TOPLEFT", 16, -10)
+    widgets.preview:SetSize(40, 40)
     widgets.previewIcon = widgets.preview:CreateTexture(nil, "ARTWORK")
     widgets.previewIcon:SetAllPoints()
     widgets.previewIcon:SetTexCoord(.07, .93, .07, .93)
@@ -247,94 +305,40 @@ local function BuildEntry(pane)
     widgets.previewCount:SetText("5")
     widgets.previewCount:SetShadowOffset(1, -1)
     widgets.previewCount:SetShadowColor(0, 0, 0, 1)
+    widgets.entryTitle = Label(pane, "", 66, 14, 490, "GameFontNormalLarge")
 
-    widgets.enabled = Check(pane, "Enabled", 280, 43, function(value)
-        local settings = SelectedSettings()
-        if settings then settings.enabled = value; Changed() end
+    Label(pane, "Spell ID", 14, 58, 164, "GameFontHighlightSmall")
+    widgets.entryID = Edit(pane, 14, 77, 155, true, CommitID)
+    Button(pane, "Apply ID", 184, 77, 125, 26, function()
+        CommitID(widgets.entryID:GetText())
     end)
-    widgets.lock = Check(pane, "Lock position", 419, 43, function(value)
-        local settings = SelectedSettings()
-        if settings then
-            local group = ns.GetSpellGroup(selectedSpell)
-            if group then group.locked = value else settings.locked = value end
-            Changed()
-        end
+
+    Label(pane, "Custom Icon ID", 14, 107, 164, "GameFontHighlightSmall")
+    widgets.iconInput = Edit(pane, 14, 126, 155, true, ApplyIcon)
+    Button(pane, "Apply Icon", 184, 126, 125, 26, function()
+        ApplyIcon(widgets.iconInput:GetText())
     end)
-    Label(pane, "Spell ID", 145, 70, 120)
-    widgets.entryID = Edit(pane, 145, 91, 116, true, CommitID)
-    Button(pane, "Apply ID", 270, 91, 98, 26, function() CommitID(widgets.entryID:GetText()) end)
-    widgets.entryGroup = Button(pane, "Group: Solo", 380, 91, 180, 26, function()
+    local iconHelp = Label(pane, "Clear the ID and apply to use the default icon.", 323, 127, 237)
+    iconHelp:SetTextColor(.64, .64, .64)
+
+    widgets.entryLock = Button(pane, "Unlock", 14, 172, 174, 28, function()
+        local settings = SelectedSettings()
+        if not settings then return end
+        local group = ns.GetSpellGroup(selectedSpell)
+        if group then group.locked = not group.locked
+        else settings.locked = not settings.locked end
+        Changed()
+    end)
+    widgets.entryTest = Button(pane, "Test icon", 204, 172, 174, 28, function()
         if not selectedSpell then return end
-        local from = ns.GetSpellGroup(selectedSpell)
-        if from then
-            ns.MoveReact(selectedSpell, nil)
-        elseif #ns.db.groups > 0 then
-            local target = ns.GetGroup(selectedGroup) or ns.db.groups[1]
-            ns.MoveReact(selectedSpell, target.id)
+        if ns.testSpellID == selectedSpell then
+            ns.testSpellID = nil
+        else
+            ns.testSpellID = selectedSpell
         end
         Changed()
     end)
-    widgets.entryStatus = Label(pane, "", 145, 122, 415)
-
-    Label(pane, "Tracking", 20, 144, 525, "GameFontNormalLarge")
-    widgets.entryTracking = Label(pane, "Spell React - player", 22, 168, 520)
-
-    Label(pane, "Appearance", 20, 192, 525, "GameFontNormalLarge")
-    widgets.count, widgets.countLabel = Check(pane, "Countdown", 20, 217, function(value)
-        local s = SelectedSettings()
-        if s and ns.HasReactCountdown(selectedSpell) then s.countdown = value; Changed() end
-    end)
-    widgets.border = Check(pane, "Border", 214, 217, function(value)
-        local s = SelectedSettings()
-        if s then s.border = value; Changed() end
-    end)
-    widgets.entrySize, widgets.entrySizeLabel = Slider(pane, "Icon size", 27, 275, 236, 20, 100, 1, function(value)
-        local s = SelectedSettings()
-        if s then s.size = value; Changed() end
-    end)
-    widgets.entryAlpha, widgets.entryAlphaLabel = Slider(pane, "Icon alpha", 303, 275, 236, 0, 100, 5, function(value)
-        local s = SelectedSettings()
-        if s then s.alpha = value / 100; Changed() end
-    end)
-    Label(pane, "Custom Icon FileDataID", 20, 318, 188, "GameFontNormal")
-    widgets.iconInput = Edit(pane, 218, 317, 118, true, function(text)
-        local s = SelectedSettings()
-        local id = tonumber(text)
-        if s and id and id >= 1 and id == math.floor(id) then
-            s.customIcon = id; Changed()
-        else
-            widgets.entryStatus:SetText("Enter a positive numeric FileDataID.")
-        end
-    end)
-    Button(pane, "Apply", 349, 317, 84, 26, function()
-        local s = SelectedSettings()
-        local id = tonumber(widgets.iconInput:GetText())
-        if s and id and id >= 1 and id == math.floor(id) then
-            s.customIcon = id; Changed()
-        else
-            widgets.entryStatus:SetText("Enter a positive numeric FileDataID.")
-        end
-    end)
-    Button(pane, "Default", 439, 317, 116, 26, function()
-        local s = SelectedSettings()
-        if s then s.customIcon = nil; widgets.iconInput:SetText(""); Changed() end
-    end)
-    Label(pane, "Position", 20, 352, 525, "GameFontNormalLarge")
-    widgets.entryPosition = Label(pane, "", 20, 381, 280)
-    widgets.resetPosition = Button(pane, "Reset Position", 392, 375, 163, 26, function()
-        local s = SelectedSettings()
-        if s and not ns.GetSpellGroup(selectedSpell) then
-            s.x, s.y = 0, -140; Changed()
-        end
-    end)
-    widgets.entryHint = Label(pane, "", 20, 409, 540)
-    widgets.entryTest = Button(pane, "Test icon", 20, 441, 168, 28, function()
-        if selectedSpell then
-            ns.testSpellID = ns.testSpellID == selectedSpell and nil or selectedSpell
-            Changed()
-        end
-    end)
-    widgets.entryRemove = Button(pane, "Remove spell", 390, 441, 170, 28, function()
+    widgets.entryRemove = Button(pane, "Delete", 394, 172, 174, 28, function()
         if not selectedSpell then return end
         if confirmSpell ~= selectedSpell then
             confirmSpell = selectedSpell
@@ -344,10 +348,53 @@ local function BuildEntry(pane)
         local id = selectedSpell
         ns.testSpellID = nil
         ns.RemoveReact(id)
-        confirmSpell = nil
-        selectedSpell = nil
+        confirmSpell, selectedSpell = nil, nil
         spellPage = 1
         SetPage("spells")
+    end)
+    widgets.entryStatus = Label(pane, "", 14, 205, 544, "GameFontHighlightSmall")
+    widgets.entryStatus:SetTextColor(1, .45, .40)
+
+    -- React is the only supported tracker type in this build. No inert Unit or
+    -- Caster dropdowns: they do not change React tracking.
+    Label(pane, "Type", 14, 237, 240, "GameFontHighlightSmall")
+    Label(pane, "Group", 304, 237, 250, "GameFontHighlightSmall")
+    widgets.entryType = Label(pane, "Spell React", 18, 257, 242, "GameFontHighlight")
+    widgets.entryGroup = Button(pane, "Solo", 304, 253, 264, 27, function()
+        if not selectedSpell then return end
+        local from = ns.GetSpellGroup(selectedSpell)
+        if from then
+            ns.MoveReact(selectedSpell, nil)
+        elseif #ns.db.groups > 0 then
+            local to = ns.GetGroup(selectedGroup) or ns.db.groups[1]
+            ns.MoveReact(selectedSpell, to.id)
+        end
+        Changed()
+    end)
+
+    widgets.enabled = Check(pane, "Enabled", 14, 300, function(value)
+        local settings = SelectedSettings()
+        if settings then settings.enabled = value; Changed() end
+    end)
+    widgets.count, widgets.countLabel = Check(pane, "Countdown", 304, 300, function(value)
+        local settings = SelectedSettings()
+        if settings and ns.HasReactCountdown(selectedSpell) then
+            settings.countdown = value
+            Changed()
+        end
+    end)
+    widgets.border = Check(pane, "Border", 14, 335, function(value)
+        local settings = SelectedSettings()
+        if settings then settings.border = value; Changed() end
+    end)
+
+    widgets.entrySize, widgets.entrySizeLabel = Slider(pane, "Icon size", 22, 402, 245, 20, 100, 1, function(value)
+        local settings = SelectedSettings()
+        if settings then settings.size = value; Changed() end
+    end)
+    widgets.entryAlpha, widgets.entryAlphaLabel = Slider(pane, "Icon alpha", 303, 402, 245, 0, 100, 5, function(value)
+        local settings = SelectedSettings()
+        if settings then settings.alpha = value / 100; Changed() end
     end)
 end
 
@@ -444,6 +491,15 @@ function ns.RefreshOptions()
     widgets.spellsTab:SetEnabled(not onSpells)
     widgets.groupsTab:SetEnabled(onSpells)
     widgets.global:SetText(ns.db.locked and "Global: Locked" or "Global: Unlocked")
+    local editing = activePage == "entry"
+    widgets.global:SetShown(not editing)
+    widgets.spellsTab:SetShown(not editing)
+    widgets.groupsTab:SetShown(not editing)
+    widgets.entryBack:SetShown(editing)
+    widgets.bottomBack:SetShown(not editing)
+    widgets.bottomClose:ClearAllPoints()
+    widgets.bottomClose:SetPoint("TOPLEFT", panel, "TOPLEFT", editing and 20 or 300, -603)
+    widgets.bottomClose:SetWidth(editing and 547 or 267)
     for name, pane in pairs(panes) do pane:SetShown(name == activePage) end
 
     if activePage == "spells" then
@@ -488,41 +544,37 @@ function ns.RefreshOptions()
             end
         end
     elseif activePage == "entry" then
-        local s = SelectedSettings()
-        if not s then updating = false; SetPage("spells"); return end
+        local settings = SelectedSettings()
+        if not settings then updating = false; SetPage("spells"); return end
         local name, icon = ns.GetSpellInfo(selectedSpell)
         local group = ns.GetSpellGroup(selectedSpell)
+        local locked = group and group.locked or settings.locked
         widgets.entryTitle:SetText(name or ("Spell " .. selectedSpell))
-        widgets.previewIcon:SetTexture(s.customIcon or icon or FALLBACK)
-        widgets.preview:SetAlpha(s.alpha)
-        widgets.previewBorder:SetShown(s.border)
+        widgets.previewIcon:SetTexture(settings.customIcon or icon or FALLBACK)
+        widgets.preview:SetAlpha(settings.alpha)
+        widgets.previewBorder:SetShown(settings.border)
         local timed = ns.HasReactCountdown(selectedSpell)
-        widgets.previewCount:SetShown(timed and s.countdown)
-        widgets.enabled:SetChecked(s.enabled)
-        widgets.lock:SetChecked(group and group.locked or s.locked)
-        if not widgets.entryID:HasFocus() then widgets.entryID:SetText(tostring(selectedSpell)) end
-        widgets.entryStatus:SetText(group and "Grouped: return to Solo to move to another group." or "")
-        widgets.entryGroup:SetText(group and ("Group: " .. group.name .. " (Solo)") or
-            (#ns.db.groups > 0 and ("Group: Solo -> " .. (ns.GetGroup(selectedGroup) or ns.db.groups[1]).name) or "Group: Solo"))
-        widgets.entryGroup:SetEnabled(group ~= nil or #ns.db.groups > 0)
-        widgets.count:SetChecked(timed and s.countdown)
-        widgets.count:SetEnabled(timed)
-        widgets.countLabel:SetText(timed and "Countdown" or "Countdown (N/A)")
-        widgets.border:SetChecked(s.border)
-        widgets.entrySize:SetValue(s.size)
-        widgets.entrySizeLabel:SetText("Icon size: " .. s.size .. " px")
-        widgets.entryAlpha:SetValue(s.alpha * 100)
-        widgets.entryAlphaLabel:SetText("Icon alpha: " .. math.floor(s.alpha * 100 + .5) .. "%")
-        if not widgets.iconInput:HasFocus() then
-            widgets.iconInput:SetText(s.customIcon and tostring(s.customIcon) or "")
+        widgets.previewCount:SetShown(timed and settings.countdown)
+        widgets.enabled:SetChecked(settings.enabled)
+        widgets.entryLock:SetText(locked and "Unlock" or "Lock")
+        if not widgets.entryID:HasFocus() then
+            widgets.entryID:SetText(tostring(selectedSpell))
         end
-        local pos = group or s
-        widgets.entryPosition:SetText(string.format("X: %.0f   Y: %.0f", pos.x, pos.y))
-        widgets.resetPosition:SetEnabled(group == nil)
-        widgets.entryHint:SetText(group and "Unlock the group to move this icon. Personal size stays saved." or
-            "Unlock this icon or Global Lock to drag. Test previews only this spell.")
+        if not widgets.iconInput:HasFocus() then
+            widgets.iconInput:SetText(settings.customIcon and tostring(settings.customIcon) or "")
+        end
+        widgets.entryGroup:SetText(group and ("Group: " .. group.name) or "Group: Solo")
+        widgets.entryGroup:SetEnabled(group ~= nil or #ns.db.groups > 0)
+        widgets.count:SetShown(timed)
+        widgets.countLabel:SetShown(timed)
+        widgets.count:SetChecked(timed and settings.countdown)
+        widgets.border:SetChecked(settings.border)
+        widgets.entrySize:SetValue(settings.size)
+        widgets.entrySizeLabel:SetText("Icon size: " .. settings.size .. " px")
+        widgets.entryAlpha:SetValue(settings.alpha * 100)
+        widgets.entryAlphaLabel:SetText("Icon alpha: " .. math.floor(settings.alpha * 100 + .5) .. "%")
         widgets.entryTest:SetText(ns.testSpellID == selectedSpell and "Stop test" or "Test icon")
-        widgets.entryRemove:SetText(confirmSpell == selectedSpell and "Confirm remove" or "Remove spell")
+        widgets.entryRemove:SetText(confirmSpell == selectedSpell and "Confirm delete" or "Delete")
     elseif activePage == "group" then
         local group = SelectedGroup()
         if not group then updating = false; SetPage("groups"); return end
@@ -589,16 +641,20 @@ local function BuildPanel()
         pane:SetSize(590, 480)
         panes[name] = pane
     end
+    widgets.entryBack = Button(panel, "< Back to Spells", 20, 77, 267, 27, function()
+        SetPage("spells")
+    end)
+    widgets.entryBack:Hide()
     BuildSpells(panes.spells)
     BuildGroups(panes.groups)
     BuildEntry(panes.entry)
     BuildGroup(panes.group)
-    Button(panel, "Back", 20, 603, 267, 28, function()
+    widgets.bottomBack = Button(panel, "Back", 20, 603, 267, 28, function()
         if activePage == "entry" then SetPage("spells")
         elseif activePage == "group" then SetPage("groups")
         else panel:Hide() end
     end)
-    Button(panel, "Close", 300, 603, 267, 28, function() panel:Hide() end)
+    widgets.bottomClose = Button(panel, "Close", 300, 603, 267, 28, function() panel:Hide() end)
     panel:SetScript("OnShow", ns.RefreshOptions)
     panel:SetScript("OnHide", function()
         if ns.testSpellID then ns.testSpellID = nil; ns.Draw() end
