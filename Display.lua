@@ -1,312 +1,114 @@
 local ADDON_NAME, ns = ...
 
-local WHITE = "Interface\\Buttons\\WHITE8X8"
+local SIZE, SPACING = 40, 4
+local QUESTION = "Interface\\Icons\\INV_Misc_QuestionMark"
 local BORDER = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\Border_squared"
-local FALLBACK = "Interface\\Icons\\INV_Misc_QuestionMark"
 
-local function OmniCCLoaded()
-    if C_AddOns and C_AddOns.IsAddOnLoaded then return C_AddOns.IsAddOnLoaded("OmniCC") end
-    return IsAddOnLoaded and IsAddOnLoaded("OmniCC") or false
-end
-
-local function SetCountdown(cooldown, entry)
-    local enabled = entry.showCountdown ~= false
-    cooldown.noCooldownCount = not enabled or nil
-    if cooldown.SetHideCountdownNumbers then
-        cooldown:SetHideCountdownNumbers(not enabled or OmniCCLoaded())
-    end
-    if OmniCC and OmniCC.Cooldown and OmniCC.Cooldown.Refresh then
-        OmniCC.Cooldown.Refresh(cooldown, true)
+local function SavePosition()
+    if not ns.db or not ns.displayRoot then return end
+    local x, y = ns.displayRoot:GetCenter()
+    local ux, uy = UIParent:GetCenter()
+    if x and y and ux and uy then
+        ns.db.x = x - ux
+        ns.db.y = y - uy
     end
 end
 
-local function ApplyPosition(frame, item)
-    frame:ClearAllPoints()
-    frame:SetPoint(item.point or "CENTER", UIParent, item.relativePoint or "CENTER", item.x or 0, item.y or -140)
+local function StartDrag()
+    if ns.db and not ns.db.locked then ns.displayRoot:StartMoving() end
 end
 
-local function SavePosition(frame, item)
-    if not item then return end
-    local point, _, relativePoint, x, y = frame:GetPoint(1)
-    item.point, item.relativePoint, item.x, item.y = point, relativePoint, x, y
+local function StopDrag()
+    if not ns.displayRoot then return end
+    ns.displayRoot:StopMovingOrSizing()
+    SavePosition()
 end
 
-local function StartIconDrag(self)
-    local entry = self.entry
-    if not entry or not ns.db then return end
-    local group = ns.FindGroup(entry.groupId)
-    if group then
-        if not group.locked and self.groupFrame then self.groupFrame:StartMoving() end
-    elseif not entry.locked then
-        self:StartMoving()
-    end
-end
+local function MakeIcon(spellID)
+    local frame = CreateFrame("Frame", nil, ns.displayRoot)
+    frame:SetSize(SIZE, SIZE)
+    frame:EnableMouse(true)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetScript("OnDragStart", StartDrag)
+    frame:SetScript("OnDragStop", StopDrag)
+    -- Use the existing Icon/Media/Border_squared.blp texture from the pilot.
+    frame.icon = frame:CreateTexture(nil, "ARTWORK")
+    frame.icon:SetAllPoints(frame)
+    frame.icon:SetTexCoord(.07, .93, .07, .93)
 
-local function StopIconDrag(self)
-    local entry = self.entry
-    if not entry then return end
-    local group = ns.FindGroup(entry.groupId)
-    if group and self.groupFrame then
-        self.groupFrame:StopMovingOrSizing()
-        SavePosition(self.groupFrame, group)
-    elseif not group then
-        self:StopMovingOrSizing()
-        if entry.id and entry.id > 0 then SavePosition(self, entry) end
-    end
-end
-
-local function MakeBorder(button)
-    local layer = CreateFrame("Frame", nil, button)
-    layer:SetAllPoints(button)
-    layer:SetFrameLevel(button.cooldown:GetFrameLevel() + 1)
-    button.borderFrame = layer
-    button.border = layer:CreateTexture(nil, "ARTWORK")
-    button.border:SetAllPoints(layer)
-    button.border:SetTexture(BORDER)
-end
-
-local function MakeIcon()
-    local button = CreateFrame("Frame", nil, ns.displayRoot)
-    button:SetFrameStrata("MEDIUM")
-    button:SetClampedToScreen(true)
-    button:SetMovable(true)
-    button:EnableMouse(true)
-    button:RegisterForDrag("LeftButton")
-    button:SetScript("OnDragStart", StartIconDrag)
-    button:SetScript("OnDragStop", StopIconDrag)
-
-    button.icon = button:CreateTexture(nil, "ARTWORK")
-    button.icon:SetAllPoints()
-    button.icon:SetTexCoord(.07, .93, .07, .93)
-
-    button.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-    button.cooldown:SetAllPoints()
-    button.cooldown:SetDrawSwipe(true)
-    button.cooldown:SetReverse(true)
-    if button.cooldown.SetDrawEdge then button.cooldown:SetDrawEdge(false) end
-    if button.cooldown.SetDrawBling then button.cooldown:SetDrawBling(false) end
-    MakeBorder(button)
-
-    local above = CreateFrame("Frame", nil, button)
-    above:SetAllPoints(button)
-    above:SetFrameLevel(button.borderFrame:GetFrameLevel() + 1)
-    button.stack = above:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
-    button.stack:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
-    button.stack:SetJustifyH("RIGHT")
-    button.stack:SetTextColor(1, 1, 1)
-    button.stack:SetShadowOffset(1, -1)
-    button.stack:SetShadowColor(0, 0, 0, 1)
-
-    button:SetScript("OnEnter", function(self)
-        local entry, item = self.entry, self.item
-        if not entry then return end
-        local name = item and item.name or ns.SpellInfo(entry.spellID)
+    frame.border = frame:CreateTexture(nil, "OVERLAY")
+    frame.border:SetAllPoints(frame)
+    frame.border:SetTexture(BORDER)
+    frame:SetScript("OnEnter", function(self)
+        local state = ns.states and ns.states[self.spellID]
+        local name = ns.GetSpellInfo(self.spellID)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(name or ("Spell " .. entry.spellID), 1, 1, 1)
-        GameTooltip:AddLine(entry.kind == "COOLDOWN" and ("Cooldown  |  " .. (entry.cooldownMode == "READY" and "Ready" or entry.cooldownMode == "ALWAYS" and "Always" or "On Cooldown"))
-            or (entry.kind .. "  |  " .. (entry.unit or "player")), .75, .75, .75)
-        GameTooltip:AddLine("Spell ID: " .. entry.spellID, .75, .75, .75)
-        if item and item.count and item.count > 1 then
-            GameTooltip:AddLine("Stacks / charges: " .. item.count, 1, 1, 1)
-        end
-        if not item and not entry.groupId then
-            GameTooltip:AddLine("Inactive — drag while unlocked.", .8, .7, 1)
+        GameTooltip:SetText(name or ("Spell " .. self.spellID), 1, 1, 1)
+        GameTooltip:AddLine("Spell React  |  ID: " .. self.spellID, .75, .75, .75)
+        GameTooltip:AddLine(state and state.active and "Active" or "Inactive (preview)", .8, .8, .8)
+        if ns.db and not ns.db.locked then
+            GameTooltip:AddLine("Drag to move the entire icon row.", .7, .65, 1)
         end
         GameTooltip:Show()
     end)
-    button:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    button:Hide()
-    button.positionDirty = true
-    return button
-end
-
-local function MakeGroupFrame(group)
-    local frame = CreateFrame("Frame", nil, ns.displayRoot)
-    frame:SetFrameStrata("MEDIUM")
-    frame:SetSize(140, 36)
-    frame:SetMovable(true)
-    frame:SetClampedToScreen(true)
-    frame:EnableMouse(true)
-    frame:RegisterForDrag("LeftButton")
-    frame.group = group
-    frame:SetScript("OnDragStart", function(self)
-        if self.group and not self.group.locked then self:StartMoving() end
-    end)
-    frame:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        SavePosition(self, self.group)
-    end)
-    frame.anchor = frame:CreateTexture(nil, "BACKGROUND")
-    frame.anchor:SetAllPoints()
-    frame.anchor:SetTexture(WHITE)
-    frame.anchor:SetVertexColor(.52, .37, .76, .35)
-    frame.anchorText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    frame.anchorText:SetPoint("CENTER")
-    frame.anchorText:SetText(group.name .. " — drag to move")
-    ApplyPosition(frame, group)
-    frame:Hide()
+    frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    frame.spellID = spellID
+    local _, icon = ns.GetSpellInfo(spellID)
+    frame.icon:SetTexture(icon or QUESTION)
     return frame
 end
 
 function ns.CreateDisplay()
     if ns.displayRoot then return end
-    ns.displayRoot = CreateFrame("Frame", "IconTrackerRoot", UIParent)
-    ns.displayRoot:SetAllPoints(UIParent)
+    local root = CreateFrame("Frame", nil, UIParent)
+    root:SetSize(SIZE, SIZE)
+    root:SetPoint("CENTER", UIParent, "CENTER", ns.db.x, ns.db.y)
+    root:SetFrameStrata("MEDIUM")
+    root:SetMovable(true)
+    root:SetClampedToScreen(true)
+    root:EnableMouse(true)
+    root:RegisterForDrag("LeftButton")
+    root:SetScript("OnDragStart", StartDrag)
+    root:SetScript("OnDragStop", StopDrag)
+    ns.displayRoot = root
     ns.iconFrames = {}
-    ns.groupFrames = {}
 end
 
-function ns.ApplyPosition()
-    if not ns.db then return end
-    for _, group in ipairs(ns.db.groups) do
-        local frame = ns.groupFrames[group.id]
-        if frame then ApplyPosition(frame, group) end
-    end
-    for _, entry in ipairs(ns.db.tracked) do
-        if not entry.groupId then
-            local frame = ns.iconFrames[entry.id]
-            if frame then ApplyPosition(frame, entry); frame.positionDirty = false end
-        end
-    end
-    ns.Refresh()
-end
-
-local function RenderIcon(button, entry, item, size, placeholder)
-    button.entry, button.item = entry, item
-    button:SetSize(size, size)
-    -- An inactive, unlocked solo icon is a drag preview of the actual spell.
-    -- Keep it at 50% opacity regardless of the saved alpha setting.
-    local dragPreview = placeholder and item == nil
-    button:SetAlpha(dragPreview and .5 or math.max(0, math.min(1, tonumber(entry.alpha) or 1)))
-    button.icon:SetShown(item ~= nil or dragPreview)
-    button.borderFrame:SetShown((item ~= nil or dragPreview) and entry.showBorder ~= false)
-    button.stack:SetText(item and entry.showStacks ~= false and item.count and item.count > 1 and item.count or "")
-    if dragPreview then
-        local _, icon = ns.SpellInfo(entry.spellID)
-        button.icon:SetTexture(ns.EntryIcon(entry, icon) or FALLBACK)
-    end
-    if item then
-        button.icon:SetTexture(ns.EntryIcon(entry, item.icon) or FALLBACK)
-        SetCountdown(button.cooldown, entry)
-        if item.duration and item.duration > 0 then
-            local start = item.start or 0
-            if button.lastEntryID ~= entry.id or button.lastStart ~= start
-                or button.lastDuration ~= item.duration or button.lastRate ~= (item.rate or 1) then
-                button.cooldown:SetCooldown(start, item.duration, item.rate or 1)
-                button.lastEntryID, button.lastStart, button.lastDuration, button.lastRate = entry.id, start, item.duration, item.rate or 1
-            end
-            button.cooldown:Show()
-        else
-            button.cooldown:Clear()
-            button.cooldown:Hide()
-            button.lastEntryID, button.lastStart, button.lastDuration, button.lastRate = nil, nil, nil, nil
-        end
-    else
-        button.cooldown:Clear()
-        button.cooldown:Hide()
-        button.lastEntryID, button.lastStart, button.lastDuration, button.lastRate = nil, nil, nil, nil
-    end
-end
-
-local function GetIcon(entry)
-    local button = ns.iconFrames[entry.id]
-    if not button then
-        button = MakeIcon()
-        ns.iconFrames[entry.id] = button
-    end
-    return button
-end
-
-local function DrawSolo(entry, item)
-    local button = GetIcon(entry)
-    if button:GetParent() ~= ns.displayRoot then
-        button:SetParent(ns.displayRoot)
-        button.positionDirty = true
-    end
-    button.groupFrame = nil
-    if button.positionDirty then
-        ApplyPosition(button, entry)
-        button.positionDirty = false
-    end
-    local visible = item ~= nil or (entry.enabled and not entry.locked)
-    if visible then RenderIcon(button, entry, item, entry.size or 36, item == nil) end
-    button:SetShown(visible)
-end
-
-local function Offset(extra, align)
-    if align == "START" then return 0 end
-    if align == "END" then return extra end
-    return extra / 2
-end
-
-local function DrawGroup(group, active)
-    local frame = ns.groupFrames[group.id]
-    if not frame then
-        frame = MakeGroupFrame(group)
-        ns.groupFrames[group.id] = frame
-    end
-    frame.group = group -- Resetting the development DB may reuse a group ID.
-    local occupied, visibleCount = {}, 0
-    for _, id in ipairs(group.members) do
-        local entry = ns.FindEntry(id)
-        local item = entry and active[id]
-        if entry and (entry.enabled or item) then
-            if item then visibleCount = visibleCount + 1 end
-            if item or group.layout == "FIXED" then
-                occupied[#occupied + 1] = { entry = entry, item = item,
-                    size = group.sizeMode == "UNIFORM" and group.groupSize or entry.size or 36 }
-            end
-        end
-    end
-    local horizontal = group.orientation ~= "VERTICAL"
-    local spacing = group.spacing or 0
-    local totalMain, maxCross = 0, 0
-    for _, slot in ipairs(occupied) do
-        totalMain = totalMain + slot.size
-        if slot.size > maxCross then maxCross = slot.size end
-    end
-    if #occupied > 1 then totalMain = totalMain + spacing * (#occupied - 1) end
-    local width = horizontal and totalMain or maxCross
-    local height = horizontal and maxCross or totalMain
-    if visibleCount == 0 then
-        width, height = 140, 36
-    end
-    frame:SetSize(math.max(1, width), math.max(1, height))
-    frame:EnableMouse(not group.locked)
-    frame.anchor:SetShown(visibleCount == 0 and not group.locked)
-    frame.anchorText:SetShown(visibleCount == 0 and not group.locked)
-    frame.anchorText:SetText(group.name .. " — drag to move")
-    frame:SetShown(visibleCount > 0 or not group.locked)
-    local cursor = 0
-    for _, slot in ipairs(occupied) do
-        local button = GetIcon(slot.entry)
-        if button:GetParent() ~= frame then button:SetParent(frame) end
-        button.groupFrame = frame
-        RenderIcon(button, slot.entry, slot.item, slot.size, false)
-        button:ClearAllPoints()
-        if horizontal then
-            button:SetPoint("TOPLEFT", frame, "TOPLEFT", cursor, -Offset(maxCross - slot.size, group.align))
-        else
-            button:SetPoint("TOPLEFT", frame, "TOPLEFT", Offset(maxCross - slot.size, group.align), -cursor)
-        end
-        button.positionDirty = true -- Keep the old solo position for detaching later.
-        button:SetShown(slot.item ~= nil)
-        cursor = cursor + slot.size + spacing
-    end
-end
-
-function ns.Draw(items)
+-- Unlike the pilot renderer, this only changes visibility when necessary.
+-- Existing frames persist; removed IDs go to a small reusable frame pool.
+function ns.Draw()
     if not ns.db or not ns.displayRoot then return end
-    local active = {}
-    for _, item in ipairs(items) do active[item.entry.id] = item end
-    for _, button in pairs(ns.iconFrames) do button:Hide() end
-    for _, frame in pairs(ns.groupFrames) do frame:Hide() end
-    for _, entry in ipairs(ns.db.tracked) do
-        if (entry.enabled or active[entry.id]) and not entry.groupId then DrawSolo(entry, active[entry.id]) end
+    local visible = {}
+    for _, spellID in ipairs(ns.db.tracked) do
+        local state = ns.states and ns.states[spellID]
+        if (state and state.active) or ns.testMode or not ns.db.locked then
+            visible[#visible + 1] = spellID
+        end
     end
-    for _, group in ipairs(ns.db.groups) do DrawGroup(group, active) end
-    -- Empty test mode previews have no saved spell entries or groups.
-    if ns.testMode and #ns.db.tracked == 0 then
-        for _, item in ipairs(items) do DrawSolo(item.entry, item) end
+
+    local count = #visible
+    ns.displayRoot:SetSize(math.max(SIZE, count * (SIZE + SPACING) - SPACING), SIZE)
+    local wanted = {}
+    for index, spellID in ipairs(visible) do
+        wanted[spellID] = true
+        local frame = ns.iconFrames[spellID]
+        if not frame then
+            frame = MakeIcon(spellID)
+            ns.iconFrames[spellID] = frame
+        end
+        frame:ClearAllPoints()
+        frame:SetPoint("LEFT", ns.displayRoot, "LEFT", (index - 1) * (SIZE + SPACING), 0)
+        local state = ns.states and ns.states[spellID]
+        frame:SetAlpha(((state and state.active) or ns.testMode) and 1 or .45)
+        if not frame:IsShown() then frame:Show() end
+    end
+    for spellID, frame in pairs(ns.iconFrames) do
+        if not wanted[spellID] and frame:IsShown() then frame:Hide() end
+    end
+    ns.displayRoot:EnableMouse(not ns.db.locked)
+    if count == 0 then
+        if ns.displayRoot:IsShown() then ns.displayRoot:Hide() end
+    elseif not ns.displayRoot:IsShown() then
+        ns.displayRoot:Show()
     end
 end
