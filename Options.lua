@@ -7,7 +7,7 @@ local spellMenu, menuEntryID, addPopup, addGroupID, addInput, addStatus, addTabs
 local movePopup, moveEntryID, deletePopup, deleteEntryID, deleteLabel
 local OpenSpellMenu, OpenAddPopup, OpenMovePopup, OpenDeletePopup, RefreshAddPopup
 local addExistingPage, addSelection, addRecent, addMode = 1, {}, {}, "existing"
-local addForm = { kind = "BUFF", unit = "player", caster = "ANY", trigger = "AURA", auraKind = "BUFF" }
+local addForm = { kind = "BUFF", unit = "player", caster = "ANY", cooldownMode = "READY" }
 local addWidgets = { rows = {}, recent = {} }
 local movePage = 1
 local MOVE_PAGE_SIZE = 6
@@ -15,7 +15,7 @@ local activePage = "spells"
 local selectedEntryID, selectedGroupID
 local spellPage, groupPage, memberPage = 1, 1, 1
 local PAGE_SIZE, GROUP_PAGE_SIZE, MEMBER_PAGE_SIZE = 5, 6, 4
-local form = { kind = "BUFF", unit = "player", caster = "ANY", trigger = "AURA", auraKind = "BUFF" }
+local form = { kind = "BUFF", unit = "player", caster = "ANY", cooldownMode = "READY" }
 local widgets = { spellRows = {}, groupRows = {}, memberRows = {} }
 local dragMemberID, dragGroupID, dragTargetID
 local FALLBACK_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
@@ -90,6 +90,52 @@ local function SetStatus(label, message, bad)
     else label:SetTextColor(.58, .85, .62) end
 end
 
+local TYPE_OPTIONS = { { "Buff", "BUFF" }, { "Debuff", "DEBUFF" }, { "Cooldown", "COOLDOWN" } }
+local UNIT_OPTIONS = { { "Player", "player" }, { "Target", "target" }, { "Focus", "focus" }, { "Pet", "pet" } }
+local CASTER_OPTIONS = { { "Any", "ANY" }, { "Mine", "MINE" } }
+local MODE_OPTIONS = { { "Ready", "READY" }, { "On Cooldown", "ON_COOLDOWN" } }
+local TYPE_NAMES = { BUFF = "Buff", DEBUFF = "Debuff", COOLDOWN = "Cooldown" }
+
+-- Standard Blizzard dropdown (not a button cycling through its values).
+-- The control owns no saved state: getValue and onPick read/write the form
+-- or the selected entry, and Sync refreshes the text and disabled state.
+local dropdownSerial = 0
+local function Dropdown(parent, x, y, width, caption, options, getValue, onPick)
+    -- Classic UIDropDownMenu_EnableDropDown/DisableDropDown build child names
+    -- from frame:GetName(); anonymous template frames cause a nil concat error.
+    dropdownSerial = dropdownSerial + 1
+    local dropName = ADDON_NAME .. "OptionsDropdown" .. dropdownSerial
+    local drop = CreateFrame("Frame", dropName, parent, "UIDropDownMenuTemplate")
+    drop:SetPoint("TOPLEFT", parent, "TOPLEFT", x - 16, y + 3)
+    UIDropDownMenu_SetWidth(drop, width - 34)
+    drop.caption = Label(parent, caption, x + 1, y + 22, width - 4, "GameFontHighlightSmall")
+    UIDropDownMenu_Initialize(drop, function(_, level)
+        if level ~= 1 then return end
+        for _, option in ipairs(options) do
+            local value, label = option[2], option[1]
+            local info = UIDropDownMenu_CreateInfo()
+            info.text, info.value = label, value
+            info.checked = getValue() == value
+            info.func = function()
+                CloseDropDownMenus()
+                onPick(value)
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end)
+    function drop:Sync(enabled)
+        local value = getValue()
+        local name = "?"
+        for _, option in ipairs(options) do
+            if option[2] == value then name = option[1]; break end
+        end
+        UIDropDownMenu_SetText(self, name)
+        if enabled == false then UIDropDownMenu_DisableDropDown(self)
+        else UIDropDownMenu_EnableDropDown(self) end
+    end
+    return drop
+end
+
 local function CycleValue(current, options)
     for i, value in ipairs(options) do
         if value == current then return options[i % #options + 1] end
@@ -128,27 +174,16 @@ local function OpenGroup(id)
 end
 
 local function RefreshForm()
-    local typeNames = { BUFF = "Buff", DEBUFF = "Debuff", PROC = "Proc" }
-    local triggerNames = { AURA = "Aura", OVERPOWER = "Overpower", COUNTERATTACK = "Counterattack" }
-    widgets.formKind:SetText("Type: " .. typeNames[form.kind])
-    widgets.formUnit:SetText("Unit: " .. form.unit)
-    widgets.formCaster:SetText("Caster: " .. (form.caster == "MINE" and "Mine" or "Any"))
-    widgets.formTrigger:SetText("Trigger: " .. triggerNames[form.trigger])
-    widgets.formTrigger:SetShown(form.kind == "PROC")
-    widgets.formAura:SetText("Aura: " .. (form.auraKind == "BUFF" and "Buff" or "Debuff"))
-    widgets.formAura:SetShown(form.kind == "PROC" and form.trigger == "AURA")
-    widgets.formUnit:SetEnabled(form.kind ~= "PROC" or form.trigger == "AURA")
-    widgets.formCaster:SetEnabled(form.kind ~= "PROC" or form.trigger == "AURA")
+    widgets.formKind:Sync()
+    widgets.formUnit:Sync(form.kind ~= "COOLDOWN")
+    widgets.formCaster:Sync(form.kind ~= "COOLDOWN")
+    widgets.formCooldown:SetShown(form.kind == "COOLDOWN")
+    widgets.formCooldown.caption:SetShown(form.kind == "COOLDOWN")
+    if form.kind == "COOLDOWN" then widgets.formCooldown:Sync() end
 end
 
-local function CycleForm(field, options)
-    form[field] = CycleValue(form[field], options)
-    if field == "kind" then
-        if form.kind == "BUFF" or form.kind == "DEBUFF" then form.auraKind = form.kind end
-    elseif field == "trigger" then
-        if form.trigger == "OVERPOWER" then spellInput:SetText("7384") end
-        if form.trigger == "COUNTERATTACK" then spellInput:SetText("19306") end
-    end
+local function SetForm(field, value)
+    form[field] = value
     RefreshForm()
 end
 
@@ -160,8 +195,7 @@ local function AddSpell()
     end
     local ok, message = ns.AddEntry({
         spellID = id, kind = form.kind, unit = form.unit, caster = form.caster,
-        trigger = form.trigger, auraKind = form.kind == "PROC" and form.auraKind or form.kind,
-        enabled = true,
+        cooldownMode = form.cooldownMode, enabled = true,
     })
     SetStatus(statusText, message, not ok)
     if ok then
@@ -195,11 +229,14 @@ local function BuildSpells(pane)
     spellInput:SetMaxLetters(9)
     spellInput:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     spellInput:SetScript("OnEnterPressed", AddSpell)
-    widgets.formKind = Button(pane, "", 150, -52, 126, 26, function() CycleForm("kind", { "BUFF", "DEBUFF", "PROC" }) end)
-    widgets.formUnit = Button(pane, "", 282, -52, 126, 26, function() CycleForm("unit", { "player", "target", "focus", "pet" }) end)
-    widgets.formCaster = Button(pane, "", 414, -52, 145, 26, function() CycleForm("caster", { "ANY", "MINE" }) end)
-    widgets.formTrigger = Button(pane, "", 20, -85, 196, 26, function() CycleForm("trigger", { "AURA", "OVERPOWER", "COUNTERATTACK" }) end)
-    widgets.formAura = Button(pane, "", 226, -85, 160, 26, function() CycleForm("auraKind", { "BUFF", "DEBUFF" }) end)
+    widgets.formKind = Dropdown(pane, 150, -52, 126, "Type", TYPE_OPTIONS,
+        function() return form.kind end, function(v) SetForm("kind", v) end)
+    widgets.formUnit = Dropdown(pane, 282, -52, 126, "Unit", UNIT_OPTIONS,
+        function() return form.unit end, function(v) SetForm("unit", v) end)
+    widgets.formCaster = Dropdown(pane, 414, -52, 145, "Caster", CASTER_OPTIONS,
+        function() return form.caster end, function(v) SetForm("caster", v) end)
+    widgets.formCooldown = Dropdown(pane, 20, -85, 240, "Display mode", MODE_OPTIONS,
+        function() return form.cooldownMode end, function(v) SetForm("cooldownMode", v) end)
     Button(pane, "Add", 414, -85, 145, 26, AddSpell)
     statusText = Label(pane, "", 20, -120, 530, "GameFontHighlightSmall")
     Label(pane, "Tracked spells — left-click to edit, right-click for actions", 20, -152, 550)
@@ -536,28 +573,16 @@ OpenMovePopup = function(id)
 end
 
 local function RefreshAddForm()
-    local typeNames = { BUFF = "Buff", DEBUFF = "Debuff", PROC = "Proc" }
-    local triggers = { AURA = "Aura", OVERPOWER = "Overpower", COUNTERATTACK = "Counterattack" }
-    addWidgets.kind:SetText("Type: " .. typeNames[addForm.kind])
-    addWidgets.unit:SetText("Unit: " .. addForm.unit)
-    addWidgets.caster:SetText("Caster: " .. (addForm.caster == "MINE" and "Mine" or "Any"))
-    addWidgets.trigger:SetText("Trigger: " .. triggers[addForm.trigger])
-    addWidgets.trigger:SetShown(addForm.kind == "PROC")
-    addWidgets.aura:SetText("Aura: " .. (addForm.auraKind == "BUFF" and "Buff" or "Debuff"))
-    addWidgets.aura:SetShown(addForm.kind == "PROC" and addForm.trigger == "AURA")
-    local aura = addForm.kind ~= "PROC" or addForm.trigger == "AURA"
-    addWidgets.unit:SetEnabled(aura)
-    addWidgets.caster:SetEnabled(aura)
+    addWidgets.kind:Sync()
+    addWidgets.unit:Sync(addForm.kind ~= "COOLDOWN")
+    addWidgets.caster:Sync(addForm.kind ~= "COOLDOWN")
+    addWidgets.cooldown:SetShown(addForm.kind == "COOLDOWN")
+    addWidgets.cooldown.caption:SetShown(addForm.kind == "COOLDOWN")
+    if addForm.kind == "COOLDOWN" then addWidgets.cooldown:Sync() end
 end
 
-local function CycleAddForm(field, options)
-    addForm[field] = CycleValue(addForm[field], options)
-    if field == "kind" and (addForm.kind == "BUFF" or addForm.kind == "DEBUFF") then
-        addForm.auraKind = addForm.kind
-    elseif field == "trigger" then
-        if addForm.trigger == "OVERPOWER" then addInput:SetText("7384") end
-        if addForm.trigger == "COUNTERATTACK" then addInput:SetText("19306") end
-    end
+local function SetAddForm(field, value)
+    addForm[field] = value
     RefreshAddForm()
 end
 
@@ -641,8 +666,7 @@ local function AddNewEntry()
     end
     local ok, message, newID = ns.AddEntry({
         spellID = id, kind = addForm.kind, unit = addForm.unit, caster = addForm.caster,
-        trigger = addForm.trigger, auraKind = addForm.kind == "PROC" and addForm.auraKind or addForm.kind,
-        enabled = true,
+        cooldownMode = addForm.cooldownMode, enabled = true,
     })
     if not ok then
         SetStatus(addStatus, message, true)
@@ -723,11 +747,14 @@ local function BuildAddPopup()
     addInput:SetMaxLetters(9)
     addInput:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     addInput:SetScript("OnEnterPressed", AddNewEntry)
-    addWidgets.kind = Button(newer, "", 145, -33, 119, 26, function() CycleAddForm("kind", { "BUFF", "DEBUFF", "PROC" }) end)
-    addWidgets.unit = Button(newer, "", 270, -33, 119, 26, function() CycleAddForm("unit", { "player", "target", "focus", "pet" }) end)
-    addWidgets.caster = Button(newer, "", 395, -33, 132, 26, function() CycleAddForm("caster", { "ANY", "MINE" }) end)
-    addWidgets.trigger = Button(newer, "", 20, -69, 205, 26, function() CycleAddForm("trigger", { "AURA", "OVERPOWER", "COUNTERATTACK" }) end)
-    addWidgets.aura = Button(newer, "", 235, -69, 155, 26, function() CycleAddForm("auraKind", { "BUFF", "DEBUFF" }) end)
+    addWidgets.kind = Dropdown(newer, 145, -33, 119, "Type", TYPE_OPTIONS,
+        function() return addForm.kind end, function(v) SetAddForm("kind", v) end)
+    addWidgets.unit = Dropdown(newer, 270, -33, 119, "Unit", UNIT_OPTIONS,
+        function() return addForm.unit end, function(v) SetAddForm("unit", v) end)
+    addWidgets.caster = Dropdown(newer, 395, -33, 132, "Caster", CASTER_OPTIONS,
+        function() return addForm.caster end, function(v) SetAddForm("caster", v) end)
+    addWidgets.cooldown = Dropdown(newer, 20, -69, 260, "Display mode", MODE_OPTIONS,
+        function() return addForm.cooldownMode end, function(v) SetAddForm("cooldownMode", v) end)
     addStatus = Label(newer, "", 20, -109, 508, "GameFontHighlightSmall")
     Label(newer, "Recently added — click Edit for individual settings", 20, -147, 508, "GameFontNormal")
     for i = 1, 3 do
@@ -929,17 +956,12 @@ local function BuildGroups(pane)
     Label(pane, "Right-click a group to add or move spells.", 20, -450, 545, "GameFontHighlightSmall")
 end
 
-local function ChangeEntry(field, options)
+local function ChangeEntry(field, value)
     local entry = ns.FindEntry(selectedEntryID)
     if not entry then return end
-    entry[field] = CycleValue(entry[field], options)
-    if field == "kind" then
-        if entry.kind == "BUFF" or entry.kind == "DEBUFF" then
-            entry.trigger, entry.auraKind = "AURA", entry.kind
-        end
-    elseif field == "trigger" then
-        if entry.trigger == "OVERPOWER" then entry.spellID = 7384 end
-        if entry.trigger == "COUNTERATTACK" then entry.spellID = 19306 end
+    entry[field] = value
+    if field == "kind" and value == "COOLDOWN" and entry.cooldownMode ~= "ON_COOLDOWN" then
+        entry.cooldownMode = "READY"
     end
     ns.EntriesChanged()
 end
@@ -950,11 +972,18 @@ local function BuildEntry(pane)
     widgets.entryIcon:SetPoint("TOPLEFT", 22, -6)
     widgets.entryTitle = Label(pane, "", 68, -7, 420, "GameFontNormalLarge")
     widgets.entryID = Label(pane, "", 69, -30, 405, "GameFontHighlightSmall")
-    widgets.entryKind = Button(pane, "", 20, -62, 166, 27, function() ChangeEntry("kind", { "BUFF", "DEBUFF", "PROC" }) end)
-    widgets.entryUnit = Button(pane, "", 195, -62, 166, 27, function() ChangeEntry("unit", { "player", "target", "focus", "pet" }) end)
-    widgets.entryCaster = Button(pane, "", 370, -62, 190, 27, function() ChangeEntry("caster", { "ANY", "MINE" }) end)
-    widgets.entryTrigger = Button(pane, "", 20, -99, 263, 27, function() ChangeEntry("trigger", { "AURA", "OVERPOWER", "COUNTERATTACK" }) end)
-    widgets.entryAura = Button(pane, "", 292, -99, 267, 27, function() ChangeEntry("auraKind", { "BUFF", "DEBUFF" }) end)
+    widgets.entryKind = Dropdown(pane, 20, -62, 166, "Type", TYPE_OPTIONS,
+        function() local e = ns.FindEntry(selectedEntryID); return e and e.kind end,
+        function(v) ChangeEntry("kind", v) end)
+    widgets.entryUnit = Dropdown(pane, 195, -62, 166, "Unit", UNIT_OPTIONS,
+        function() local e = ns.FindEntry(selectedEntryID); return e and e.unit end,
+        function(v) ChangeEntry("unit", v) end)
+    widgets.entryCaster = Dropdown(pane, 370, -62, 190, "Caster", CASTER_OPTIONS,
+        function() local e = ns.FindEntry(selectedEntryID); return e and e.caster end,
+        function(v) ChangeEntry("caster", v) end)
+    widgets.entryCooldown = Dropdown(pane, 20, -99, 300, "Display mode", MODE_OPTIONS,
+        function() local e = ns.FindEntry(selectedEntryID); return e and (e.cooldownMode or "READY") end,
+        function(v) ChangeEntry("cooldownMode", v) end)
     widgets.entryGroup = Button(pane, "", 20, -140, 540, 29, function()
         local entry = ns.FindEntry(selectedEntryID)
         if not entry then return end
@@ -1131,7 +1160,9 @@ local function RefreshSpells()
             row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
             row.name:SetText((name or "Unknown") .. " |cff9f7bff[" .. entry.spellID .. "]|r")
             local group = ns.FindGroup(entry.groupId)
-            row.desc:SetText(entry.kind .. " · " .. (group and ("Group: " .. group.name) or (entry.unit .. " · " .. entry.auraKind .. " · " .. entry.caster)))
+            row.desc:SetText((TYPE_NAMES[entry.kind] or entry.kind) .. " · " .. (group and ("Group: " .. group.name)
+                or (entry.kind == "COOLDOWN" and (entry.cooldownMode == "ON_COOLDOWN" and "On Cooldown" or "Ready")
+                    or (entry.unit .. " · " .. entry.caster))))
             if not entry.enabled then
                 row.desc:SetText(row.desc:GetText() .. " · Disabled")
             end
@@ -1165,21 +1196,19 @@ local function RefreshEntry()
     widgets.entryIcon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
     widgets.entryTitle:SetText(name or "Unknown spell")
     widgets.entryID:SetText("Spell ID: " .. entry.spellID)
-    widgets.entryKind:SetText("Type: " .. entry.kind)
-    widgets.entryUnit:SetText("Unit: " .. entry.unit)
-    widgets.entryCaster:SetText("Caster: " .. (entry.caster == "MINE" and "Mine" or "Any"))
-    widgets.entryTrigger:SetText("Trigger: " .. entry.trigger)
-    widgets.entryAura:SetText("Aura: " .. entry.auraKind)
-    widgets.entryTrigger:SetShown(entry.kind == "PROC")
-    widgets.entryAura:SetShown(entry.kind == "PROC" and entry.trigger == "AURA")
-    local usesAura = entry.kind ~= "PROC" or entry.trigger == "AURA"
-    widgets.entryUnit:SetEnabled(usesAura)
-    widgets.entryCaster:SetEnabled(usesAura)
+    widgets.entryKind:Sync()
+    widgets.entryUnit:Sync(entry.kind ~= "COOLDOWN")
+    widgets.entryCaster:Sync(entry.kind ~= "COOLDOWN")
+    widgets.entryCooldown:SetShown(entry.kind == "COOLDOWN")
+    widgets.entryCooldown.caption:SetShown(entry.kind == "COOLDOWN")
+    if entry.kind == "COOLDOWN" then widgets.entryCooldown:Sync() end
     local group = ns.FindGroup(entry.groupId)
     widgets.entryGroup:SetText("Group: " .. (group and group.name or "Solo") .. "   (click to change)")
     widgets.entryCount:SetChecked(entry.showCountdown)
     widgets.entryBorder:SetChecked(entry.showBorder)
     widgets.entryStacks:SetChecked(entry.showStacks)
+    widgets.entryStacks:SetShown(entry.kind ~= "COOLDOWN")
+    widgets.entryCount:SetEnabled(entry.kind ~= "COOLDOWN" or entry.cooldownMode == "ON_COOLDOWN")
     widgets.entryLock:SetChecked(group and group.locked or (not group and entry.locked))
     widgets.entryLock:SetEnabled(not group)
     widgets.entryLockLabel:SetText(group and "Lock position (controlled by group)" or "Lock position")
@@ -1269,7 +1298,7 @@ local function BuildPanel()
     })
     panel:SetBackdropColor(.08, .08, .10, .97)
     panel:SetBackdropBorderColor(.45, .38, .60)
-    local title = Label(panel, (Meta("Title") or "Icon") .. " |cff9f7bffv" .. (Meta("Version") or "0.4.1") .. "|r", 181, -14, 275, "GameFontNormalLarge")
+    local title = Label(panel, (Meta("Title") or "Icon") .. " |cff9f7bffv" .. (Meta("Version") or "0.5.0") .. "|r", 181, -14, 275, "GameFontNormalLarge")
     title:SetJustifyH("CENTER")
     Label(panel, "Author: " .. (Meta("Author") or "Hooch"), 19, -46, 300, "GameFontHighlightSmall")
     Button(panel, "X", 550, -12, 27, 25, function() panel:Hide() end)

@@ -1,6 +1,5 @@
 local ADDON_NAME, ns = ...
 local events = CreateFrame("Frame")
-ns.procWindows = {}
 ns.testMode = false
 ns.testGroupID = nil
 ns.testEntryID = nil
@@ -73,17 +72,7 @@ function ns.Refresh()
     end
 end
 
-function ns.UpdateCombatRegistration()
-    if ns.HasCombatProcs() then
-        events:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-    else
-        events:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-        ns.ClearProcWindows()
-    end
-end
-
 function ns.EntriesChanged()
-    ns.UpdateCombatRegistration()
     ns.Refresh()
     if ns.RefreshOptions then ns.RefreshOptions() end
 end
@@ -105,8 +94,8 @@ function ns.AddEntry(data)
     if not name then return false, "Unknown Spell ID (try another rank)." end
     for _, old in ipairs(ns.db.tracked) do
         if old.spellID == entry.spellID and old.kind == entry.kind
-            and old.unit == entry.unit and old.caster == entry.caster
-            and old.trigger == entry.trigger and old.auraKind == entry.auraKind then
+            and (entry.kind == "COOLDOWN"
+                or (old.unit == entry.unit and old.caster == entry.caster)) then
             return false, "That tracking rule already exists."
         end
     end
@@ -294,7 +283,6 @@ function ns.Reset()
     ns.testMode = false
     ns.testGroupID = nil
     ns.testEntryID = nil
-    ns.ClearProcWindows()
     ns.EntriesChanged()
 end
 
@@ -331,6 +319,8 @@ events:RegisterEvent("PLAYER_FOCUS_CHANGED")
 events:RegisterEvent("UNIT_AURA")
 events:RegisterEvent("UNIT_PET")
 events:RegisterEvent("PLAYER_DEAD")
+events:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+events:RegisterEvent("SPELLS_CHANGED")
 events:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" then
         local name = ...
@@ -339,6 +329,27 @@ events:SetScript("OnEvent", function(_, event, ...)
                 IconDB = NewDatabase()
             end
             ns.db = IconDB
+            -- Development cleanup: remove old Proc rules without erasing
+            -- existing Buff/Debuff icons or group positions.
+            local removed = {}
+            for i = #ns.db.tracked, 1, -1 do
+                local entry = ns.db.tracked[i]
+                if entry.kind == "PROC" then
+                    removed[entry.id] = true
+                    table.remove(ns.db.tracked, i)
+                else
+                    entry.trigger, entry.auraKind = nil, nil
+                    if entry.kind == "COOLDOWN" and entry.cooldownMode ~= "ON_COOLDOWN" then
+                        entry.cooldownMode = "READY"
+                    end
+                end
+            end
+            for _, group in ipairs(ns.db.groups) do
+                for i = #group.members, 1, -1 do
+                    if removed[group.members[i]] then table.remove(group.members, i) end
+                end
+            end
+            if removed[ns.testEntryID] then ns.testEntryID = nil end
             for _, group in ipairs(ns.db.groups) do
                 -- Previously unnamed groups were displayed as bare numbers.
                 if type(group.name) == "string" and group.name:match("^%d+$") then
@@ -351,23 +362,19 @@ events:SetScript("OnEvent", function(_, event, ...)
                 end
             end
             ns.CreateDisplay()
-            ns.UpdateCombatRegistration()
-            ns.Refresh()
+                    ns.Refresh()
         elseif name == "OmniCC" and ns.db then
             ns.Refresh()
         end
         return
     end
     if not ns.db then return end
-    if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        ns.HandleCombatLog()
-    elseif event == "UNIT_AURA" then
+    if event == "UNIT_AURA" then
         local unit = ...
         if unit == "player" or unit == "target" or unit == "focus" or unit == "pet" then ns.Refresh() end
     elseif event == "UNIT_PET" then
         if (...) == "player" then ns.Refresh() end
     elseif event == "PLAYER_DEAD" or event == "PLAYER_ENTERING_WORLD" then
-        ns.ClearProcWindows()
         ns.Refresh()
     else
         ns.Refresh()

@@ -1,8 +1,7 @@
 local ADDON_NAME, ns = ...
 
 local VALID_UNITS = { player = true, target = true, focus = true, pet = true }
-local VALID_TYPES = { BUFF = true, DEBUFF = true, PROC = true }
-local VALID_TRIGGERS = { AURA = true, OVERPOWER = true, COUNTERATTACK = true }
+local VALID_TYPES = { BUFF = true, DEBUFF = true, COOLDOWN = true }
 
 function ns.SpellInfo(spellID)
     if type(spellID) ~= "number" then return nil end
@@ -21,13 +20,13 @@ function ns.NormalizeEntry(entry)
     if type(entry) ~= "table" then return nil end
     local spellID = tonumber(entry.spellID)
     if not spellID or spellID < 1 or spellID ~= math.floor(spellID) then return nil end
-    local kind = VALID_TYPES[entry.kind] and entry.kind or "BUFF"
-    local trigger = kind == "PROC" and (VALID_TRIGGERS[entry.trigger] and entry.trigger or "AURA") or "AURA"
+    if not VALID_TYPES[entry.kind] then return nil end
+    local kind = entry.kind
     local unit = VALID_UNITS[entry.unit] and entry.unit or "player"
-    local auraKind = (kind == "DEBUFF" or (kind == "PROC" and entry.auraKind == "DEBUFF")) and "DEBUFF" or "BUFF"
     return {
-        spellID = spellID, kind = kind, trigger = trigger, unit = unit,
-        auraKind = auraKind, caster = entry.caster == "MINE" and "MINE" or "ANY",
+        spellID = spellID, kind = kind, unit = unit,
+        caster = entry.caster == "MINE" and "MINE" or "ANY",
+        cooldownMode = entry.cooldownMode == "ON_COOLDOWN" and "ON_COOLDOWN" or "READY",
         enabled = entry.enabled ~= false, groupId = nil,
         point = "CENTER", relativePoint = "CENTER", x = 0, y = -140,
         size = 36, showCountdown = true, showBorder = true,
@@ -58,7 +57,7 @@ local function Scan(unit, filter)
 end
 
 local function FindAura(entry, cache, now)
-    local filter = entry.auraKind == "DEBUFF" and "HARMFUL" or "HELPFUL"
+    local filter = entry.kind == "DEBUFF" and "HARMFUL" or "HELPFUL"
     local key = entry.unit .. ":" .. filter
     if not cache[key] then cache[key] = Scan(entry.unit, filter) end
     local expectedName = ns.SpellInfo(entry.spellID)
@@ -88,93 +87,80 @@ local function AuraDisplay(entry, aura)
     }
 end
 
+-- Classic/Anniversary has a legacy GetSpellCooldown API; clients with the
+-- newer C_Spell API return a table instead. Use whichever is available.
+local function SpellCooldown(spellID)
+    if C_Spell and C_Spell.GetSpellCooldown then
+        local info = C_Spell.GetSpellCooldown(spellID)
+        if info then
+            return tonumber(info.startTime) or 0, tonumber(info.duration) or 0,
+                info.isEnabled, tonumber(info.modRate) or 1
+        end
+    end
+    if GetSpellCooldown then return GetSpellCooldown(spellID) end
+    return nil
+end
+
+local function CooldownDisplay(entry, now, gcdStart, gcdDuration)
+    -- A known spell check avoids treating an unrelated or unlearned spell ID
+    -- with an empty cooldown response as an always-ready ability.
+    if C_SpellBook and C_SpellBook.IsSpellKnown then
+        if not C_SpellBook.IsSpellKnown(entry.spellID) then return nil end
+    elseif IsSpellKnown and not IsSpellKnown(entry.spellID) then
+        return nil
+    end
+    local started, duration, enabled, rate = SpellCooldown(entry.spellID)
+    -- Don't interpret an unavailable API or a disabled spell as "ready".
+    if started == nil or enabled == 0 or enabled == false then return nil end
+    rate = type(rate) == "number" and rate > 0 and rate or 1
+    duration = tonumber(duration) or 0
+    started = tonumber(started) or 0
+    local expires = started + duration / rate
+    local running = started > 0 and duration > 0 and expires > now
+    if running and duration <= 1.6 then
+        -- Spell 61304 is the GCD. Do not mistake a GCD-only response for
+        -- an ability's own cooldown. Also suppress short GCD-only responses
+        -- when this client's GCD lookup isn't exposed.
+        local matchesGCD = gcdStart and gcdStart > 0
+            and math.abs(started - gcdStart) < 0.12
+            and math.abs(duration - gcdDuration) < 0.12
+        if matchesGCD or not gcdStart or gcdStart == 0 then running = false end
+    end
+    local mode = entry.cooldownMode == "ON_COOLDOWN" and "ON_COOLDOWN" or "READY"
+    if mode == "ON_COOLDOWN" then
+        if not running then return nil end
+    elseif running then
+        return nil, expires -- Wake up when Ready should become visible.
+    end
+    local name, icon = ns.SpellInfo(entry.spellID)
+    return {
+        entry = entry, name = name, icon = icon, count = 0,
+        start = running and started or 0,
+        duration = running and duration or 0,
+        rate = rate, expires = running and expires or nil,
+    }, running and expires or nil
+end
+
 function ns.ReadTracked(now)
     local active, cache = {}, {}
     local earliest
+    local gcdStart, gcdDuration = SpellCooldown(61304)
     for _, entry in ipairs(ns.db.tracked) do
         if entry.enabled then
-            local result
-            if entry.kind == "PROC" and entry.trigger ~= "AURA" then
-                local window = ns.procWindows[entry.trigger]
-                if window and window.expires > now
-                    and (entry.trigger ~= "OVERPOWER" or (UnitExists("target") and UnitGUID("target") == window.targetGUID)) then
-                    local name, icon = ns.SpellInfo(entry.spellID)
-                    result = {
-                        entry = entry, name = name, icon = icon, count = 0,
-                        start = window.started, duration = window.duration,
-                        expires = window.expires,
-                    }
-                end
-            else
+            local result, wake
+            if entry.kind == "COOLDOWN" then
+                result, wake = CooldownDisplay(entry, now, gcdStart, gcdDuration)
+            elseif entry.kind == "BUFF" or entry.kind == "DEBUFF" then
                 result = AuraDisplay(entry, FindAura(entry, cache, now))
             end
-            if result then
-                active[#active + 1] = result
-                if result.expires and (not earliest or result.expires < earliest) then
-                    earliest = result.expires
-                end
+            if result then active[#active + 1] = result end
+            local expires = wake or (result and result.expires)
+            if expires and expires > now and (not earliest or expires < earliest) then
+                earliest = expires
             end
         end
     end
     return active, earliest
-end
-
-function ns.HasCombatProcs()
-    if not ns.db then return false end
-    for _, entry in ipairs(ns.db.tracked) do
-        if entry.enabled and entry.kind == "PROC" and entry.trigger ~= "AURA" then return true end
-    end
-    return false
-end
-
-function ns.ClearProcWindows()
-    ns.procWindows.OVERPOWER = nil
-    ns.procWindows.COUNTERATTACK = nil
-end
-
--- WoW combat log has 11 shared fields; SWING_MISSED uses arg 12 for
--- missType, while SPELL_MISSED and RANGE_MISSED use arg 15.
-function ns.HandleCombatLog()
-    if not CombatLogGetCurrentEventInfo then return end
-    local _, subevent, _, sourceGUID, _, _, _, destGUID, _, _, _, a12, a13, a14, a15 = CombatLogGetCurrentEventInfo()
-    local playerGUID = UnitGUID("player")
-    if not playerGUID then return end
-    local miss
-    if subevent == "SWING_MISSED" then
-        miss = a12
-    elseif subevent == "SPELL_MISSED" or subevent == "RANGE_MISSED" then
-        miss = a15
-    elseif subevent == "SPELL_CAST_SUCCESS" and sourceGUID == playerGUID then
-        -- Remove the window when Overpower/Counterattack is actually used.
-        local spellName = ns.SpellInfo(a12)
-        local changed = false
-        if spellName then
-            for trigger, window in pairs(ns.procWindows) do
-                if window.spellName == spellName then
-                    ns.procWindows[trigger] = nil
-                    changed = true
-                end
-            end
-        end
-        if changed then ns.Refresh() end
-        return
-    else
-        return
-    end
-    local now = GetTime()
-    if miss == "DODGE" and sourceGUID == playerGUID and destGUID then
-        ns.procWindows.OVERPOWER = {
-            started = now, duration = 5, expires = now + 5,
-            targetGUID = destGUID, spellName = ns.SpellInfo(7384),
-        }
-        ns.Refresh()
-    elseif miss == "PARRY" and destGUID == playerGUID then
-        ns.procWindows.COUNTERATTACK = {
-            started = now, duration = 5, expires = now + 5,
-            spellName = ns.SpellInfo(19306),
-        }
-        ns.Refresh()
-    end
 end
 
 function ns.ReadPreview(now, onlyGroupID, onlyEntryID)
@@ -188,20 +174,20 @@ function ns.ReadPreview(now, onlyGroupID, onlyEntryID)
     end
     if #entries == 0 and not onlyGroupID and not onlyEntryID then
         entries = {
-            { id = -1, spellID = 30823, kind = "BUFF", unit = "player", auraKind = "BUFF", size = 36, point = "CENTER", relativePoint = "CENTER", x = -44, y = -140, showCountdown = true, showBorder = true, showStacks = true, locked = true },
-            { id = -2, spellID = 24398, kind = "BUFF", unit = "player", auraKind = "BUFF", size = 36, point = "CENTER", relativePoint = "CENTER", x = 0, y = -140, showCountdown = true, showBorder = true, showStacks = true, locked = true },
-            { id = -3, spellID = 1715, kind = "DEBUFF", unit = "target", auraKind = "DEBUFF", size = 36, point = "CENTER", relativePoint = "CENTER", x = 44, y = -140, showCountdown = true, showBorder = true, showStacks = true, locked = true },
+            { id = -1, spellID = 30823, kind = "BUFF", unit = "player", size = 36, point = "CENTER", relativePoint = "CENTER", x = -44, y = -140, showCountdown = true, showBorder = true, showStacks = true, locked = true },
+            { id = -2, spellID = 24398, kind = "BUFF", unit = "player", size = 36, point = "CENTER", relativePoint = "CENTER", x = 0, y = -140, showCountdown = true, showBorder = true, showStacks = true, locked = true },
+            { id = -3, spellID = 1715, kind = "DEBUFF", unit = "target", size = 36, point = "CENTER", relativePoint = "CENTER", x = 44, y = -140, showCountdown = true, showBorder = true, showStacks = true, locked = true },
         }
     end
     local result = {}
     for i, entry in ipairs(entries) do
         local name, icon = ns.SpellInfo(entry.spellID)
-        local duration = 15 + i * 8
+        local duration = (entry.kind == "COOLDOWN" and entry.cooldownMode ~= "ON_COOLDOWN") and 0 or (15 + i * 8)
         result[#result + 1] = {
             entry = entry, name = (name or ("Spell " .. entry.spellID)) .. " (test)",
-            icon = icon, count = i == 2 and 3 or 0,
+            icon = icon, count = entry.kind ~= "COOLDOWN" and i == 2 and 3 or 0,
             start = ns.previewStart or now, duration = duration,
-            expires = (ns.previewStart or now) + duration,
+            expires = duration > 0 and ((ns.previewStart or now) + duration) or nil,
         }
     end
     return result

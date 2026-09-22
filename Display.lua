@@ -5,7 +5,7 @@ local FALLBACK = "Interface\\Icons\\INV_Misc_QuestionMark"
 local BORDER_COLORS = {
     BUFF = { .35, .80, .45 },
     DEBUFF = { .96, .32, .31 },
-    PROC = { .68, .48, .98 },
+    COOLDOWN = { .35, .62, .98 },
 }
 
 local function OmniCCLoaded()
@@ -127,13 +127,11 @@ local function MakeIcon()
         local name = item and item.name or ns.SpellInfo(entry.spellID)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(name or ("Spell " .. entry.spellID), 1, 1, 1)
-        GameTooltip:AddLine(entry.kind .. "  |  " .. (entry.unit or "player"), .75, .75, .75)
+        GameTooltip:AddLine(entry.kind == "COOLDOWN" and ("Cooldown  |  " .. (entry.cooldownMode == "ON_COOLDOWN" and "On Cooldown" or "Ready"))
+            or (entry.kind .. "  |  " .. (entry.unit or "player")), .75, .75, .75)
         GameTooltip:AddLine("Spell ID: " .. entry.spellID, .75, .75, .75)
         if item and item.count and item.count > 1 then
             GameTooltip:AddLine("Stacks / charges: " .. item.count, 1, 1, 1)
-        end
-        if entry.kind == "PROC" and entry.trigger ~= "AURA" then
-            GameTooltip:AddLine("Combat-log estimate; not a castability check.", 1, .8, .35, true)
         end
         if not item and not entry.groupId then
             GameTooltip:AddLine("Inactive — drag while unlocked.", .8, .7, 1)
@@ -212,20 +210,21 @@ local function RenderIcon(button, entry, item, size, placeholder)
         SetCountdown(button.cooldown, entry)
         if item.duration and item.duration > 0 then
             local start = item.start or 0
-            if button.lastEntryID ~= entry.id or button.lastStart ~= start or button.lastDuration ~= item.duration then
-                button.cooldown:SetCooldown(start, item.duration)
-                button.lastEntryID, button.lastStart, button.lastDuration = entry.id, start, item.duration
+            if button.lastEntryID ~= entry.id or button.lastStart ~= start
+                or button.lastDuration ~= item.duration or button.lastRate ~= (item.rate or 1) then
+                button.cooldown:SetCooldown(start, item.duration, item.rate or 1)
+                button.lastEntryID, button.lastStart, button.lastDuration, button.lastRate = entry.id, start, item.duration, item.rate or 1
             end
             button.cooldown:Show()
         else
             button.cooldown:Clear()
             button.cooldown:Hide()
-            button.lastEntryID, button.lastStart, button.lastDuration = nil, nil, nil
+            button.lastEntryID, button.lastStart, button.lastDuration, button.lastRate = nil, nil, nil, nil
         end
     else
         button.cooldown:Clear()
         button.cooldown:Hide()
-        button.lastEntryID, button.lastStart, button.lastDuration = nil, nil, nil
+        button.lastEntryID, button.lastStart, button.lastDuration, button.lastRate = nil, nil, nil, nil
     end
 end
 
