@@ -1,5 +1,12 @@
 # Icon
 
+## v0.4.1 — group member list controls
+
+- In **Groups > Edit group > Spells in group**, each member has a 24x24 spell texture beside its name and Spell ID.
+- Left-click the icon or name to open that spell's settings; right-click the member row to open the same spell actions used in the main Spells list (including Move to group and Unlock group position).
+- Drag the `::` grip on the left over another visible row, then release to reorder the group without changing any spell settings. No up/down arrows or inline Edit buttons. Reordering is confined to the current group list page; if released outside a row, order is unchanged.
+
+
 Standalone aura and proc icon tracker by Hooch for **WoW TBC Classic Anniversary (Interface 20506)**.
 
 ## Installation
@@ -22,7 +29,7 @@ Standalone aura and proc icon tracker by Hooch for **WoW TBC Classic Anniversary
 - A single-spell preview affects only that spell; the rest continue normal tracking. A disabled spell may also be previewed. Group, single-spell and global previews are mutually exclusive.
 - In each spell's settings, click **Group: Solo** to cycle between Solo and your groups. You may move a spell into or out of any group at any time.
 - A group has its own position, Lock position, Orientation (Horizontal/Vertical), Layout (Compact/Fixed), Alignment, Spacing, and size mode (Individual/Uniform). Individual keeps each member's size; Uniform temporarily overrides them with the group's size. Removing a group detaches its spells and keeps their personal settings.
-- **Compact** places only active icons next to each other. **Fixed** reserves an invisible slot for each *enabled* member, even when inactive. Move members with the `^` and `v` buttons in group settings. Drag any visible icon to move the entire unlocked group. An empty unlocked group has a draggable handle.
+- **Compact** places only active icons next to each other. **Fixed** reserves an invisible slot for each *enabled* member, even when inactive. Drag the member-list grips to reorder spells on the current page. Drag any visible icon to move the entire unlocked group. An empty unlocked group has a draggable handle.
 - Duration uses Blizzard's native cooldown swipe. Cooldown Count supports Blizzard or OmniCC without duplicate countdowns. Stacks and charges can be hidden individually.
 - `/icon test` previews configured icons even when their effects are not active. If there are no tracked spells, three temporary standalone demo icons appear.
 
@@ -39,4 +46,4 @@ Standalone aura and proc icon tracker by Hooch for **WoW TBC Classic Anniversary
 - `/icon` — open options.
 - `/icon test` — toggle preview.
 - `/icon lock` / `/icon unlock` — lock/unlock all solo icons and groups.
-- `/icon reset` — **erase all tracked spells, groups and settings**, restoring a blank v0.4.0 configuration.
+- `/icon reset` — **erase all tracked spells, groups and settings**, restoring a blank v0.4.1 configuration.

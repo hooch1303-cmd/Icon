@@ -216,6 +216,23 @@ function ns.MoveMember(groupID, entryID, step)
     end
 end
 
+-- Dragging a member in the configuration list reorders IDs only. It never
+-- changes the entry's group, personal display settings, or tracking rule.
+function ns.ReorderMember(groupID, entryID, targetID)
+    local group = ns.FindGroup(groupID)
+    if not group or entryID == targetID then return false end
+    local from, to
+    for i, id in ipairs(group.members) do
+        if id == entryID then from = i end
+        if id == targetID then to = i end
+    end
+    if not from or not to then return false end
+    table.remove(group.members, from)
+    table.insert(group.members, to, entryID)
+    ns.EntriesChanged()
+    return true
+end
+
 function ns.DeleteGroup(id)
     local group = ns.FindGroup(id)
     if not group then return end

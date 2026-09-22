@@ -17,6 +17,15 @@ local spellPage, groupPage, memberPage = 1, 1, 1
 local PAGE_SIZE, GROUP_PAGE_SIZE, MEMBER_PAGE_SIZE = 5, 6, 4
 local form = { kind = "BUFF", unit = "player", caster = "ANY", trigger = "AURA", auraKind = "BUFF" }
 local widgets = { spellRows = {}, groupRows = {}, memberRows = {} }
+local dragMemberID, dragGroupID, dragTargetID
+local FALLBACK_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
+
+local function ResetMemberDrag()
+    dragMemberID, dragGroupID, dragTargetID = nil, nil, nil
+    for _, row in ipairs(widgets.memberRows) do
+        if row.bg then row.bg:SetVertexColor(.18, .16, .22, .56) end
+    end
+end
 
 local function Meta(key)
     if C_AddOns and C_AddOns.GetAddOnMetadata then return C_AddOns.GetAddOnMetadata(ADDON_NAME, key) end
@@ -96,6 +105,7 @@ local function CloseGroupMenu()
 end
 
 local function SelectPage(name)
+    ResetMemberDrag()
     CloseGroupMenu()
     if addPopup then addPopup:Hide() end
     if movePopup then movePopup:Hide() end
@@ -170,6 +180,7 @@ local function NewRow(parent, y, width)
     bg:SetAllPoints()
     bg:SetTexture("Interface\\Buttons\\WHITE8X8")
     bg:SetVertexColor(.18, .16, .22, .56)
+    row.bg = bg
     return row
 end
 
@@ -1017,24 +1028,78 @@ local function BuildGroup(pane)
     for i = 1, MEMBER_PAGE_SIZE do
         local row = NewRow(pane, -288 - (i - 1) * 36, 540)
         row:SetHeight(33)
-        row.name = Label(row, "", 9, -8, 270, "GameFontHighlight")
-        row.edit = Button(row, "Edit", 311, -4, 75, 24, function()
-            local group = ns.FindGroup(selectedGroupID)
-            local id = group and group.members[(memberPage - 1) * MEMBER_PAGE_SIZE + i]
-            if id then OpenEntry(id) end
+        row.grip = CreateFrame("Button", nil, row)
+        row.grip:SetPoint("TOPLEFT", row, "TOPLEFT", 1, -1)
+        row.grip:SetSize(24, 31)
+        row.grip:RegisterForDrag("LeftButton")
+        row.grip.label = row.grip:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        row.grip.label:SetPoint("CENTER")
+        row.grip.label:SetText("|cff9f7bff::|r")
+        row.grip:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        row.grip:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Drag to reorder", 1, 1, 1)
+            GameTooltip:Show()
         end)
-        row.up = Button(row, "^", 392, -4, 62, 24, function()
+        row.grip:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        row.grip:SetScript("OnDragStart", function()
             local group = ns.FindGroup(selectedGroupID)
             local id = group and group.members[(memberPage - 1) * MEMBER_PAGE_SIZE + i]
-            if id then ns.MoveMember(group.id, id, -1) end
+            if not id then return end
+            CloseGroupMenu()
+            dragMemberID, dragGroupID, dragTargetID = id, group.id, id
         end)
-        row.down = Button(row, "v", 461, -4, 63, 24, function()
+        row.grip:SetScript("OnDragStop", function()
+            local from, target, groupID = dragMemberID, dragTargetID, dragGroupID
+            ResetMemberDrag()
+            if from and target and groupID and selectedGroupID == groupID then
+                ns.ReorderMember(groupID, from, target)
+            end
+        end)
+        row.icon = row:CreateTexture(nil, "ARTWORK")
+        row.icon:SetSize(24, 24)
+        row.icon:SetPoint("LEFT", row, "LEFT", 29, 0)
+        row.icon:SetTexCoord(.07, .93, .07, .93)
+        row.name = Label(row, "", 63, -8, 455, "GameFontHighlight")
+        row.hit = CreateFrame("Button", nil, row)
+        row.hit:SetPoint("TOPLEFT", row, "TOPLEFT", 25, 0)
+        row.hit:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+        row.hit:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        row.hit:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        row.hit:SetScript("OnClick", function(_, mouseButton)
+            if dragMemberID then return end
             local group = ns.FindGroup(selectedGroupID)
             local id = group and group.members[(memberPage - 1) * MEMBER_PAGE_SIZE + i]
-            if id then ns.MoveMember(group.id, id, 1) end
+            if not id then return end
+            if mouseButton == "RightButton" then OpenSpellMenu(row, id, i + 3)
+            else OpenEntry(id) end
         end)
         widgets.memberRows[i] = row
     end
+    -- Highlight the row under the cursor while a grip is being dragged.
+    -- This works only on the visible page; moving to another page still uses
+    -- Move to group or the existing page controls.
+    pane:SetScript("OnUpdate", function()
+        if not dragMemberID or dragGroupID ~= selectedGroupID or activePage ~= "group" then return end
+        local group = ns.FindGroup(dragGroupID)
+        if not group then ResetMemberDrag(); return end
+        local x, y = GetCursorPosition()
+        local scale = UIParent:GetEffectiveScale()
+        x, y = x / scale, y / scale
+        dragTargetID = nil
+        for i, row in ipairs(widgets.memberRows) do
+            local memberID = group.members[(memberPage - 1) * MEMBER_PAGE_SIZE + i]
+            local hovered = row:IsShown() and memberID
+                and x >= row:GetLeft() and x <= row:GetRight()
+                and y >= row:GetBottom() and y <= row:GetTop()
+            if hovered then dragTargetID = memberID end
+            if row.bg then
+                if hovered then row.bg:SetVertexColor(.52, .37, .76, .72)
+                elseif memberID == dragMemberID then row.bg:SetVertexColor(.32, .26, .40, .72)
+                else row.bg:SetVertexColor(.18, .16, .22, .56) end
+            end
+        end
+    end)
     widgets.memberPrev = Button(pane, "<", 20, -438, 34, 24, function()
         memberPage = math.max(1, memberPage - 1); ns.RefreshOptions()
     end)
@@ -1152,10 +1217,9 @@ local function RefreshGroup()
         local entry = id and ns.FindEntry(id)
         row:SetShown(entry ~= nil)
         if entry then
-            local name = ns.SpellInfo(entry.spellID)
+            local name, icon = ns.SpellInfo(entry.spellID)
             row.name:SetText((name or "Unknown") .. " [" .. entry.spellID .. "]")
-            row.up:SetEnabled(index > 1)
-            row.down:SetEnabled(index < #group.members)
+            row.icon:SetTexture(icon or FALLBACK_ICON)
         end
     end
 end
@@ -1205,7 +1269,7 @@ local function BuildPanel()
     })
     panel:SetBackdropColor(.08, .08, .10, .97)
     panel:SetBackdropBorderColor(.45, .38, .60)
-    local title = Label(panel, (Meta("Title") or "Icon") .. " |cff9f7bffv" .. (Meta("Version") or "0.4.0") .. "|r", 181, -14, 275, "GameFontNormalLarge")
+    local title = Label(panel, (Meta("Title") or "Icon") .. " |cff9f7bffv" .. (Meta("Version") or "0.4.1") .. "|r", 181, -14, 275, "GameFontNormalLarge")
     title:SetJustifyH("CENTER")
     Label(panel, "Author: " .. (Meta("Author") or "Hooch"), 19, -46, 300, "GameFontHighlightSmall")
     Button(panel, "X", 550, -12, 27, 25, function() panel:Hide() end)
