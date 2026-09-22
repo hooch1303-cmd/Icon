@@ -1008,13 +1008,34 @@ local function CustomIconAvailable(iconID)
     return true
 end
 
+-- Show the actual spell texture FileDataID when no custom image is selected.
+-- This is a value in the edit box, not a placeholder: it can be selected/edited.
+local function DefaultEntryIconID(entry)
+    if not entry then return nil end
+    local _, texture = ns.SpellInfo(entry.spellID)
+    local id = tonumber(texture)
+    if id and id > 0 and id == math.floor(id) then return id end
+    return nil
+end
+
+local function SyncCustomIconInput(entry)
+    if not entry or not widgets.entryCustomInput then return end
+    local customID = entry.customIconID
+    local displayedID = customID or DefaultEntryIconID(entry)
+    widgets.entryCustomInput:SetText(displayedID and tostring(displayedID) or "")
+    -- Grey means "using the default spell texture"; white means custom.
+    local shade = customID and 1 or .55
+    widgets.entryCustomInput:SetTextColor(shade, shade, shade)
+end
+
 local function CommitCustomIcon()
     local entry = ns.FindEntry(selectedEntryID)
     if not entry then return end
     local typed = widgets.entryCustomInput:GetText():match("^%s*(.-)%s*$")
     local iconID = typed:match("^%d+$") and tonumber(typed) or nil
+    local defaultID = DefaultEntryIconID(entry)
     widgets.entryCustomInput:ClearFocus()
-    if typed == "" or typed:lower() == "default" then
+    if typed == "" or typed:lower() == "default" or (defaultID and iconID == defaultID) then
         entry.customIconID = nil
         SetStatus(widgets.entryStatus, "Default spell icon restored.", false)
     elseif CustomIconAvailable(iconID) then
@@ -1024,7 +1045,7 @@ local function CommitCustomIcon()
         entry.customIconID = nil
         SetStatus(widgets.entryStatus, "Invalid icon ID — default icon restored.", true)
     end
-    widgets.entryCustomInput:SetText(entry.customIconID and tostring(entry.customIconID) or "Default")
+    SyncCustomIconInput(entry)
     ns.EntriesChanged()
 end
 
@@ -1083,8 +1104,14 @@ local function BuildEntry(pane)
     widgets.entryCustomInput:SetMaxLetters(10)
     widgets.entryCustomInput:SetScript("OnEscapePressed", function(self)
         self:ClearFocus()
-        local entry = ns.FindEntry(selectedEntryID)
-        if entry then self:SetText(entry.customIconID and tostring(entry.customIconID) or "Default") end
+        SyncCustomIconInput(ns.FindEntry(selectedEntryID))
+    end)
+    widgets.entryCustomInput:SetScript("OnEditFocusGained", function(self)
+        self:SetTextColor(1, 1, 1)
+        self:HighlightText()
+    end)
+    widgets.entryCustomInput:SetScript("OnTextChanged", function(self, userInput)
+        if userInput then self:SetTextColor(1, 1, 1) end
     end)
     widgets.entryCustomInput:SetScript("OnEnterPressed", CommitCustomIcon)
     Button(pane, "Apply Icon", 249, -164, 96, 26, CommitCustomIcon)
@@ -1322,7 +1349,7 @@ local function RefreshEntry()
     widgets.entryTitle:SetText(name or "Unknown spell")
     widgets.entryEnabled:SetChecked(entry.enabled ~= false)
     if not widgets.entryCustomInput:HasFocus() then
-        widgets.entryCustomInput:SetText(entry.customIconID and tostring(entry.customIconID) or "Default")
+        SyncCustomIconInput(entry)
     end
     if not widgets.entryIDInput:HasFocus() then
         widgets.entryIDInput:SetText(tostring(entry.spellID))
