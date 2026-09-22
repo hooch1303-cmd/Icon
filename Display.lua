@@ -1,6 +1,7 @@
 local ADDON_NAME, ns = ...
 
 local WHITE = "Interface\\Buttons\\WHITE8X8"
+local BORDER = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\Border_squared"
 local FALLBACK = "Interface\\Icons\\INV_Misc_QuestionMark"
 local BORDER_COLORS = {
     BUFF = { .35, .80, .45 },
@@ -64,21 +65,9 @@ local function MakeBorder(button)
     layer:SetAllPoints(button)
     layer:SetFrameLevel(button.cooldown:GetFrameLevel() + 1)
     button.borderFrame = layer
-    button.edges = {}
-    local data = {
-        { "TOPLEFT", "TOPRIGHT", true },
-        { "BOTTOMLEFT", "BOTTOMRIGHT", true },
-        { "TOPLEFT", "BOTTOMLEFT", false },
-        { "TOPRIGHT", "BOTTOMRIGHT", false },
-    }
-    for _, points in ipairs(data) do
-        local texture = layer:CreateTexture(nil, "ARTWORK")
-        texture:SetTexture(WHITE)
-        texture:SetPoint(points[1], layer, points[1], 0, 0)
-        texture:SetPoint(points[2], layer, points[2], 0, 0)
-        if points[3] then texture:SetHeight(2) else texture:SetWidth(2) end
-        button.edges[#button.edges + 1] = texture
-    end
+    button.border = layer:CreateTexture(nil, "ARTWORK")
+    button.border:SetAllPoints(layer)
+    button.border:SetTexture(BORDER)
 end
 
 local function MakeIcon()
@@ -206,7 +195,7 @@ local function RenderIcon(button, entry, item, size, placeholder)
     if item then
         button.icon:SetTexture(item.icon or FALLBACK)
         local color = BORDER_COLORS[entry.kind] or BORDER_COLORS.BUFF
-        for _, edge in ipairs(button.edges) do edge:SetVertexColor(color[1], color[2], color[3], .9) end
+        button.border:SetVertexColor(color[1], color[2], color[3], .9)
         SetCountdown(button.cooldown, entry)
         if item.duration and item.duration > 0 then
             local start = item.start or 0
