@@ -58,7 +58,7 @@ local function Checkbox(parent, caption, x, y, callback)
     return check, label
 end
 
-local function Slider(parent, title, x, y, low, high, callback, width)
+local function Slider(parent, title, x, y, low, high, callback, width, formatValue)
     local slider = CreateFrame("Slider", nil, parent, "OptionsSliderTemplate")
     slider:SetPoint("TOPLEFT", x, y)
     slider:SetSize(width or 480, 18)
@@ -70,14 +70,14 @@ local function Slider(parent, title, x, y, low, high, callback, width)
     slider:SetScript("OnValueChanged", function(self, value)
         if self.updating then return end
         local rounded = math.floor(value + .5)
-        caption:SetText(title .. ": " .. rounded)
+        caption:SetText(formatValue and formatValue(rounded) or (title .. ": " .. rounded))
         callback(rounded)
     end)
     function slider:Sync(value)
         self.updating = true
         self:SetValue(value)
         self.updating = false
-        caption:SetText(title .. ": " .. value)
+        caption:SetText(formatValue and formatValue(value) or (title .. ": " .. value))
     end
     slider.caption = caption
     return slider
@@ -1006,15 +1006,31 @@ local function BuildEntry(pane)
 
     widgets.entryPreview = CreateFrame("Frame", nil, preview)
     widgets.entryPreview:SetPoint("CENTER", preview, "CENTER")
-    widgets.entryPreview:SetSize(36, 36)
+    widgets.entryPreview:SetSize(64, 64)
     widgets.entryIcon = widgets.entryPreview:CreateTexture(nil, "ARTWORK")
     widgets.entryIcon:SetAllPoints()
     widgets.entryIcon:SetTexCoord(.07, .93, .07, .93)
     widgets.entryPreviewBorder = widgets.entryPreview:CreateTexture(nil, "OVERLAY")
     widgets.entryPreviewBorder:SetAllPoints()
     widgets.entryPreviewBorder:SetTexture("Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\Border_squared")
+    -- Demonstration of Cooldown Count, even if the spell is inactive in game.
+    -- This is a static sample number, not an actual aura/cooldown timer.
+    widgets.entryPreviewCount = widgets.entryPreview:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+    widgets.entryPreviewCount:SetPoint("CENTER", widgets.entryPreview, "CENTER", 0, 0)
+    widgets.entryPreviewCount:SetText("15")
+    widgets.entryPreviewCount:SetTextColor(1, 1, 1)
+    widgets.entryPreviewCount:SetShadowOffset(1, -1)
+    widgets.entryPreviewCount:SetShadowColor(0, 0, 0, 1)
 
-    widgets.entryTitle = Label(pane, "", 145, -9, 265, "GameFontNormalLarge")
+    widgets.entryTitle = Label(pane, "", 145, -9, 125, "GameFontNormalLarge")
+    widgets.entryLock, widgets.entryLockLabel = Checkbox(pane, "Lock position", 280, -5, function(checked)
+        local entry = ns.FindEntry(selectedEntryID)
+        if not entry then return end
+        local group = ns.FindGroup(entry.groupId)
+        if group then group.locked = checked else entry.locked = checked end
+        ns.EntriesChanged()
+    end)
+    widgets.entryLockLabel:SetWidth(115)
     widgets.entryEnabled, widgets.entryEnabledLabel = Checkbox(pane, "Enabled", 429, -5, function(checked)
         local entry = ns.FindEntry(selectedEntryID)
         if entry then entry.enabled = checked; ns.EntriesChanged() end
@@ -1034,6 +1050,15 @@ local function BuildEntry(pane)
     end)
     widgets.entryIDInput:SetScript("OnEnterPressed", CommitEntrySpellID)
     Button(pane, "Apply ID", 285, -57, 102, 26, CommitEntrySpellID)
+    widgets.entryGroup = Dropdown(pane, 400, -57, 160, "Group", EntryGroupOptions,
+        function()
+            local entry = ns.FindEntry(selectedEntryID)
+            return entry and (entry.groupId or false)
+        end,
+        function(groupID)
+            local entry = ns.FindEntry(selectedEntryID)
+            if entry then ns.AssignGroup(entry.id, groupID or nil) end
+        end)
     widgets.entryStatus = Label(pane, "", 145, -89, 417, "GameFontHighlightSmall")
 
     Label(pane, "Tracking", 20, -120, 525, "GameFontNormalLarge")
@@ -1070,35 +1095,17 @@ local function BuildEntry(pane)
         local entry = ns.FindEntry(selectedEntryID)
         if entry then entry.size = value; ns.EntriesChanged() end
     end, 233)
-    widgets.entryAlpha = Slider(pane, "Icon alpha (%)", 306, -308, 0, 100, function(value)
+    widgets.entryAlpha = Slider(pane, "Icon alpha", 306, -308, 0, 100, function(value)
         local entry = ns.FindEntry(selectedEntryID)
         if entry then entry.alpha = value / 100; ns.EntriesChanged() end
-    end, 233)
+    end, 233, function(value) return "Icon alpha " .. value .. " %" end)
 
-    Label(pane, "Placement", 20, -342, 525, "GameFontNormalLarge")
-    widgets.entryGroup = Dropdown(pane, 20, -386, 310, "Group", EntryGroupOptions,
-        function()
-            local entry = ns.FindEntry(selectedEntryID)
-            return entry and (entry.groupId or false)
-        end,
-        function(groupID)
-            local entry = ns.FindEntry(selectedEntryID)
-            if entry then ns.AssignGroup(entry.id, groupID or nil) end
-        end)
-    widgets.entryLock, widgets.entryLockLabel = Checkbox(pane, "Lock position", 343, -383, function(checked)
-        local entry = ns.FindEntry(selectedEntryID)
-        if not entry then return end
-        local group = ns.FindGroup(entry.groupId)
-        if group then group.locked = checked else entry.locked = checked end
-        ns.EntriesChanged()
-    end)
-    widgets.entryLockLabel:SetWidth(185)
-    widgets.entryHint = Label(pane, "", 20, -421, 540, "GameFontHighlightSmall")
-    widgets.entryTest = Button(pane, "Test icon", 20, -445, 168, 28, function()
+    widgets.entryHint = Label(pane, "", 20, -358, 540, "GameFontHighlightSmall")
+    widgets.entryTest = Button(pane, "Test icon", 20, -398, 168, 28, function()
         local entry = ns.FindEntry(selectedEntryID)
         if entry then ns.SetEntryTest(entry.id, ns.testEntryID ~= entry.id) end
     end)
-    Button(pane, "Remove spell", 390, -445, 170, 28, function()
+    Button(pane, "Remove spell", 390, -398, 170, 28, function()
         if selectedEntryID then OpenDeletePopup(selectedEntryID) end
     end)
 end
@@ -1283,12 +1290,11 @@ local function RefreshEntry()
     if not widgets.entryIDInput:HasFocus() then
         widgets.entryIDInput:SetText(tostring(entry.spellID))
     end
-    -- The preview is independent of whether this spell is currently active.
-    -- In Uniform groups it reflects the actual group size, not the saved solo size.
-    local size = group and group.sizeMode == "UNIFORM" and group.groupSize or entry.size or 36
-    widgets.entryPreview:SetSize(size, size)
+    -- The preview stays 64x64 regardless of the in-game icon or group size.
     widgets.entryPreview:SetAlpha(math.max(0, math.min(1, tonumber(entry.alpha) or 1)))
     widgets.entryPreviewBorder:SetShown(entry.showBorder ~= false)
+    widgets.entryPreviewCount:SetShown(entry.showCountdown ~= false
+        and (entry.kind ~= "COOLDOWN" or entry.cooldownMode ~= "READY"))
     widgets.entryKind:Sync()
     local usesAura = entry.kind ~= "COOLDOWN"
     widgets.entryUnit:SetShown(usesAura)
@@ -1312,7 +1318,7 @@ local function RefreshEntry()
     widgets.entryStacks:SetShown(usesAura)
     widgets.entryStacksLabel:SetShown(usesAura)
     widgets.entryLock:SetChecked(group and group.locked or (not group and entry.locked))
-    widgets.entryLockLabel:SetText(group and "Lock group position" or "Lock position")
+    widgets.entryLockLabel:SetText(group and "Lock group" or "Lock position")
     widgets.entrySize:Sync(entry.size or 36)
     widgets.entryAlpha:Sync(math.floor((tonumber(entry.alpha) or 1) * 100 + .5))
     widgets.entryHint:SetText(group and group.sizeMode == "UNIFORM"
