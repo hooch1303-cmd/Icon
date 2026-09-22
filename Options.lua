@@ -1051,10 +1051,10 @@ end
 
 -- One editor for both Solo and Group, following the approved 740px mock layout.
 local function BuildEntry(pane)
-    -- Fixed 64x64 texture only. No border, countdown, size or alpha effects.
+    -- Fixed 40x40 texture alongside the spell name; gameplay settings never affect this preview.
     widgets.entryPreview = CreateFrame("Frame", nil, pane)
-    widgets.entryPreview:SetPoint("TOPLEFT", pane, "TOPLEFT", 20, -106)
-    widgets.entryPreview:SetSize(64, 64)
+    widgets.entryPreview:SetPoint("TOPLEFT", pane, "TOPLEFT", 25, 0)
+    widgets.entryPreview:SetSize(30, 30)
     widgets.entryIcon = widgets.entryPreview:CreateTexture(nil, "ARTWORK")
     widgets.entryIcon:SetAllPoints()
     widgets.entryIcon:SetTexCoord(.07, .93, .07, .93)
@@ -1063,7 +1063,7 @@ local function BuildEntry(pane)
     widgets.entryIconProbe:SetPoint("TOPLEFT", pane, "TOPLEFT", 0, 0)
     widgets.entryIconProbe:SetAlpha(0)
 
-    widgets.entryTitle = Label(pane, "", 20, -6, 540, "GameFontNormalLarge")
+    widgets.entryTitle = Label(pane, "", 72, -12, 480, "GameFontNormalLarge")
     widgets.entryTitle:SetHeight(30)
     widgets.entryTitle:SetJustifyV("TOP")
     widgets.entryLock = Button(pane, "Unlock", 20, -46, 170, 27, function()
