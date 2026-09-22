@@ -2,7 +2,7 @@ local ADDON_NAME, ns = ...
 local events = CreateFrame("Frame")
 local elapsed = 0
 ns.states = {}
-ns.testMode = false
+ns.testSpellID = nil
 
 function ns.Print(message)
     print("|cff9f7bffIcon 1.0|r: " .. tostring(message))
@@ -67,25 +67,32 @@ local function Commands(message)
     if command == "add" then
         local _, reply = ns.AddReact(arg)
         ns.Print(reply)
-        ns.Draw() -- New inactive entry must also appear when unlocked.
+        if ns.RefreshOptions then ns.RefreshOptions() end
     elseif command == "remove" then
         local _, reply = ns.RemoveReact(arg)
         ns.Print(reply)
-        ns.Draw()
+        if ns.RefreshOptions then ns.RefreshOptions() end
     elseif command == "list" then
         PrintList()
     elseif command == "debug" then
         DebugSpell(arg)
     elseif command == "test" then
-        ns.testMode = not ns.testMode
+        local id = tonumber(arg)
+        if not id or not ns.GetIconSettings(id) then id = ns.db.tracked[1] end
+        if not id then ns.Print("No tracked spells to test."); return end
+        ns.testSpellID = ns.testSpellID == id and nil or id
         ns.Draw()
-        ns.Print("Test preview " .. (ns.testMode and "enabled" or "disabled") .. ".")
+        if ns.RefreshOptions then ns.RefreshOptions() end
+        ns.Print("Test preview " .. (ns.testSpellID and ("enabled for " .. id) or "disabled") .. ".")
     elseif command == "lock" or command == "unlock" then
         ns.db.locked = command == "lock"
         ns.Draw()
-        ns.Print(ns.db.locked and "Icons locked." or "Icons unlocked: drag any icon to move the row.")
-    elseif command == "" or command == "help" then
-        ns.Print("/icon add <ID> | remove <ID> | list | debug <ID> | test | lock | unlock")
+        if ns.RefreshOptions then ns.RefreshOptions() end
+        ns.Print(ns.db.locked and "Global lock enabled." or "Global unlock enabled: drag individual icons/groups.")
+    elseif command == "" then
+        ns.ToggleOptions()
+    elseif command == "help" then
+        ns.Print("/icon | add <ID> | remove <ID> | list | debug <ID> | test [ID] | lock | unlock")
     else
         ns.Print("Unknown command. Type /icon for help.")
     end
@@ -148,5 +155,6 @@ events:SetScript("OnUpdate", function(_, delta)
     if elapsed >= .20 then
         elapsed = 0
         ns.Refresh()
+        ns.UpdateCountdown()
     end
 end)

@@ -1,13 +1,14 @@
 ## Interface: 20506
 ## Title: Icon
 ## Author: Hooch
-## Version: 1.0.0-alpha.3
+## Version: 1.0.0-alpha.4
 ## Category: Combat
-## Notes: Standalone Spell React tracker. Type /icon for commands.
+## Notes: Standalone Spell React tracker. Type /icon to open settings.
 ## IconTexture: Interface\Icons\Ability_Warrior_SavageBlow
 ## SavedVariables: IconDB
 
 Tracking.lua
 Database.lua
 Display.lua
+Options.lua
 Core.lua

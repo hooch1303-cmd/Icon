@@ -1,62 +1,38 @@
-# Icon 1.0 — Spell React prototype
+# Icon 1.0 — Spell React alpha 4
 
-Standalone experimental Spell React tracker for WoW TBC Classic Anniversary (Interface 20506).
+Standalone Spell React tracker for WoW TBC Classic Anniversary (Interface 20506).
 
 ## Install
 
-Extract the `Icon` folder into `_anniversary_/Interface/AddOns/`, replacing the previous build, then run `/reload`. The addon uses `IconDB`. An incompatible database is replaced with fresh settings.
+Place the `Icon` folder inside `_anniversary_/Interface/AddOns/` and run `/reload`.
+The saved `IconDB` is upgraded from schema 1 to schema 2 **without clearing the tracked Spell IDs**. Existing row positions are used to initialize the independent Solo positions.
 
-## Commands
+## Settings
 
-- `/icon add 25236` — track Execute (change the ID for your actual learned rank)
-- `/icon add 7384` — track Overpower (change the ID for your actual learned rank)
-- `/icon list` — list tracked entries and whether they are active
-- `/icon remove 25236` — remove an entry
-- `/icon unlock` — show inactive icons at 45% alpha and drag the row anywhere
-- `/icon lock` — hide inactive icons
-- `/icon test` — toggle preview of all tracked icons
-- `/icon debug 25236` — print actual spell API results to chat
+- `/icon` — toggle the independent settings window.
+- **Spells** — add a supported Spell ID, select it, enable/disable, test just that icon, change size (20–100), alpha, border, custom numeric FileDataID, countdown where supported, and Solo lock.
+- **Groups** — create/rename/delete groups; choose horizontal/vertical, compact/fixed, individual/uniform sizes, start/center/end alignment, spacing, lock, order members, or return a member to Solo.
+- To put an existing Solo spell into a group, first select the destination in **Groups**, return to **Spells**, select that spell, and click `Group: Solo`. A grouped member must return to Solo before switching groups. Deleting a group returns its members to Solo without deleting their individual settings.
+- The global lock override unlocks every Solo icon and group. When locked globally, individual lock settings are respected. Unlocking shows small drag handles for otherwise inactive entries, **not** the inactive React textures.
+- Test previews only the selected spell, including an inactive/unlearned spell. Closing settings ends the test.
+- Compact removes inactive group slots; Fixed reserves their space while hiding their textures. An entirely inactive group disappears when locked.
+- Uniform group size overrides the effective size but preserves each member's individual saved size.
+- Countdown is available only for locally timed Overpower/Revenge windows; Execute, Victory Rush, and other candidates have no countdown in this release. The 5-second windows are provisional pending in-game validation.
+- Delete spell/group requires two clicks of the same button to confirm. Changes are saved immediately; no `/reload` required.
 
-## Scope
+## Diagnostics and commands
 
-No external libraries. No dependencies on action-bar buttons, action slots or macros. Displays independent spell icons only when the selected candidate ID reports an active condition, or when the row is unlocked/tested. The four Warrior abilities use their individual reaction conditions, not stance or current usability. Other candidate reactions still use `C_Spell.IsSpellUsable(spellID)` (fallback `IsUsableSpell`) and the optional Blizzard overlay signal. No countdown, glow, grouping, editor, or other tracker types in this initial build.
+- `/icon add 25236` — add a supported Spell React ID (can be learned later).
+- `/icon remove 25236`, `/icon list`, `/icon debug 25236` — manage or inspect entries.
+- `/icon test [Spell ID]` — toggle a one-icon test (without ID: first tracked spell).
+- `/icon lock`, `/icon unlock` — global positioning lock; `/icon help` — show commands.
 
-**Important:** Direct spell usability is not a universal proc detector. Some spells can be reported usable without a valid target, and low-resource or other conditions may behave differently than action-slot usability. The allowlist limits misleading results from ordinary spells but does not solve every special case. Execute and Overpower were observed working in the live client before alpha 3. Revenge, Victory Rush and the new stance-independent behavior still require in-game validation. The client may return different results than HoochUI's action-slot API, which is intentionally not used here.
+## Implementation
 
-## Structure
+- `Tracking.lua` — supported react IDs, rank knowledge and proc conditions. **Unmodified from alpha 3.**
+- `Database.lua` — schema 2 migration, Solo settings, groups and membership operations.
+- `Display.lua` — independent Solo/group roots, positioning, appearance, selective countdown.
+- `Options.lua` — dedicated settings window.
+- `Core.lua` — events, tracking refresh, slash commands and options dispatch.
 
-- `Tracking.lua` — candidate IDs, metadata lookup, Spell ID reactive predicate.
-- `Database.lua` — standalone `IconDB` store and tracked-entry commands.
-- `Display.lua` — lightweight independent movable icon row.
-- `Core.lua` — initialization, events, refresh, diagnostics, slash commands.
-
-## Alpha 2 — Overpower reaction fix
-
-Overpower uses the player's own `SWING_MISSED` / `SPELL_MISSED` combat log event
-with `DODGE` as a ~5 second, target-specific window. The icon is visible even
-outside Battle Stance, and does not require the exact tracked rank to be learned.
-It expires automatically or clears upon a successful Overpower cast, death or
-entering the world. Execute and the other candidate spells retain the alpha 1
-spell-usability detection for comparison.
-
-Use `/icon debug 7384` to view `dodgeWindow` and `targetMatch`.
-This is a combat-log hypothesis to validate in the live TBC Anniversary client.
-
-## Alpha 3 — Learned ranks and stance-independent Warrior reactions
-
-Spell React icons show only when the character knows at least one rank of the
-ability. This applies only to Spell React, without a separate class check.
-The selected Spell ID remains unchanged; knowledge refreshes on `SPELLS_CHANGED`.
-
-- Execute: a living attackable target at or below 20% health, regardless of stance or rage.
-- Overpower: the existing target-specific 5-second dodge window, now also gated
-  by knowledge of any Overpower rank.
-- Revenge: a 5-second window after you dodge, parry or block an incoming attack;
-  partial blocks are included. It is not tied to the attacker's GUID.
-- Victory Rush: the `Victorious` effect (32216) via player aura/combat log,
-  rather than guessing whether a kill awarded experience or honor.
-
-A successful cast clears its tracked window. Death and world entry clear the
-windows; event and 0.2-second safety-net refreshes remain as in alpha 2.
-An unlearned entry stays saved, and may still appear in `/icon unlock` or
-`/icon test` as a preview; it will not activate on its own.
+Warrior Execute/Overpower/Revenge/Victory Rush behavior is unchanged from alpha 3. Other candidates retain the provisional usability-based predicate; live-client validation is still needed.
