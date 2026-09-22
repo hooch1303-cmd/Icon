@@ -1,7 +1,7 @@
 ## Interface: 20506
 ## Title: Icon
 ## Author: Hooch
-## Version: 1.0.0-alpha.2
+## Version: 1.0.0-alpha.3
 ## Category: Combat
 ## Notes: Standalone Spell React tracker. Type /icon for commands.
 ## IconTexture: Interface\Icons\Ability_Warrior_SavageBlow

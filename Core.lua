@@ -54,6 +54,9 @@ local function DebugSpell(id)
         " | overlayAPI=" .. tostring(state.overlayAPI) ..
         (ns.IsOverpower(id) and (" | dodgeWindow=" .. string.format("%.1fs", state.remaining or 0) ..
             " | targetMatch=" .. tostring(state.targetMatch)) or "") ..
+        (ns.IsRevenge(id) and (" | revengeWindow=" .. string.format("%.1fs", state.remaining or 0)) or "") ..
+        (ns.IsVictoryRush(id) and (" | victoriousAura=" .. tostring(state.victoriousAura) ..
+            " | victoryWindow=" .. string.format("%.1fs", state.remaining or 0)) or "") ..
         " | ACTIVE=" .. tostring(state.active))
 end
 
@@ -97,6 +100,7 @@ events:SetScript("OnEvent", function(_, event, ...)
         if (...) ~= ADDON_NAME then return end
         if not ns.InitDatabase() then return end
         ns.CreateDisplay()
+        ns.RefreshKnownReacts()
         ns.Refresh()
         ns.Draw()
         events:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -117,7 +121,10 @@ events:SetScript("OnEvent", function(_, event, ...)
         return
     end
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_DEAD" then
-        ns.ClearOverpower()
+        ns.ClearReactiveWindows()
+    end
+    if event == "SPELLS_CHANGED" or event == "PLAYER_ENTERING_WORLD" then
+        ns.RefreshKnownReacts()
     end
     if not ns.db or #ns.db.tracked == 0 then return end
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
