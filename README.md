@@ -9,7 +9,9 @@ Extract the ZIP with `Icon.toc` at `C:\Users\GAME\Documents\Icon\Icon.toc`, or i
 ## v0.5.3 — Unified icon editor
 
 - One editor for Solo and Group icons: editable Spell ID (Enter / Apply ID), Type, Unit/Caster or Cooldown Display mode, and a real Group dropdown.
-- The header's live preview stays visible even when the tracked effect is inactive. It immediately reflects the spell texture, custom border, icon size and alpha.
+- The editor header follows the approved layout: Unlock/Lock, Test/Stop test and Delete appear in one action row. Type, Unit, Caster and Group share a row; the appearance toggles and sliders sit below.
+- The fixed 64x64 preview displays ONLY the current spell or custom icon picture. Border, Countdown, Alpha and Size affect the in-game icon only; they do not change this menu preview.
+- Custom Icon ID accepts a numeric texture FileDataID (Enter / Apply Icon). Empty or Default restores the spell icon. Invalid input also restores it; on clients with limited texture validation, some unknown numeric IDs may not be detectable immediately.
 - Icon alpha (0–100%) affects the whole in-game icon, including its border and countdown, and is saved per icon. The border texture uses its original color without Buff/Debuff/Cooldown tinting.
 - Uniform-sized groups keep determining the rendered size; the personal icon size remains editable and saved for later Solo / Individual mode.
 - Enable/Disable, individual Test, group/solo position lock and removal are available from the same editor. Glow is deliberately deferred.

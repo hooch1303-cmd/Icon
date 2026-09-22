@@ -127,6 +127,8 @@ function ns.UpdateEntrySpell(id, newSpellID)
         end
     end
     entry.spellID = newSpellID
+    -- An override belongs to the former spell's appearance, not its tracking rule.
+    entry.customIconID = nil
     ns.EntriesChanged()
     return true, "Now tracking " .. name .. "."
 end

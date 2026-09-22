@@ -16,6 +16,11 @@ function ns.SpellInfo(spellID)
     return name, icon
 end
 
+-- A custom file ID changes the picture only, never the tracked spell.
+function ns.EntryIcon(entry, originalIcon)
+    return entry and entry.customIconID or originalIcon
+end
+
 function ns.NormalizeEntry(entry)
     if type(entry) ~= "table" then return nil end
     local spellID = tonumber(entry.spellID)
@@ -30,7 +35,7 @@ function ns.NormalizeEntry(entry)
             and entry.cooldownMode or "ON_COOLDOWN",
         enabled = entry.enabled ~= false, groupId = nil,
         point = "CENTER", relativePoint = "CENTER", x = 0, y = -140,
-        size = 36, alpha = 1, showCountdown = true, showBorder = true,
+        size = 36, alpha = 1, customIconID = nil, showCountdown = true, showBorder = true,
         showStacks = true, locked = true,
     }
 end
@@ -80,7 +85,7 @@ local function AuraDisplay(entry, aura)
     local expires = tonumber(aura.expirationTime) or 0
     local name, texture = ns.SpellInfo(entry.spellID)
     return {
-        entry = entry, name = aura.name or name, icon = aura.icon or texture,
+        entry = entry, name = aura.name or name, icon = ns.EntryIcon(entry, aura.icon or texture),
         count = tonumber(aura.count) or 0,
         start = duration > 0 and expires > 0 and (expires - duration) or 0,
         duration = duration > 0 and expires > 0 and duration or 0,
@@ -138,7 +143,7 @@ local function CooldownDisplay(entry, now, gcdStart, gcdDuration)
     -- the same native swipe and numeric timer as ON_COOLDOWN.
     local name, icon = ns.SpellInfo(entry.spellID)
     return {
-        entry = entry, name = name, icon = icon, count = 0,
+        entry = entry, name = name, icon = ns.EntryIcon(entry, icon), count = 0,
         start = running and started or 0,
         duration = running and duration or 0,
         rate = rate, expires = running and expires or nil,
@@ -189,7 +194,7 @@ function ns.ReadPreview(now, onlyGroupID, onlyEntryID)
         local duration = (entry.kind == "COOLDOWN" and entry.cooldownMode == "READY") and 0 or (15 + i * 8)
         result[#result + 1] = {
             entry = entry, name = (name or ("Spell " .. entry.spellID)) .. " (test)",
-            icon = icon, count = entry.kind ~= "COOLDOWN" and i == 2 and 3 or 0,
+            icon = ns.EntryIcon(entry, icon), count = entry.kind ~= "COOLDOWN" and i == 2 and 3 or 0,
             start = ns.previewStart or now, duration = duration,
             expires = duration > 0 and ((ns.previewStart or now) + duration) or nil,
         }

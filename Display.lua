@@ -183,10 +183,10 @@ local function RenderIcon(button, entry, item, size, placeholder)
     button.stack:SetText(item and entry.showStacks ~= false and item.count and item.count > 1 and item.count or "")
     if dragPreview then
         local _, icon = ns.SpellInfo(entry.spellID)
-        button.icon:SetTexture(icon or FALLBACK)
+        button.icon:SetTexture(ns.EntryIcon(entry, icon) or FALLBACK)
     end
     if item then
-        button.icon:SetTexture(item.icon or FALLBACK)
+        button.icon:SetTexture(ns.EntryIcon(entry, item.icon) or FALLBACK)
         SetCountdown(button.cooldown, entry)
         if item.duration and item.duration > 0 then
             local start = item.start or 0
