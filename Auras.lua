@@ -26,13 +26,12 @@ function ns.NormalizeEntry(entry)
     local unit = VALID_UNITS[entry.unit] and entry.unit or "player"
     local auraKind = (kind == "DEBUFF" or (kind == "PROC" and entry.auraKind == "DEBUFF")) and "DEBUFF" or "BUFF"
     return {
-        spellID = spellID,
-        kind = kind,
-        trigger = trigger,
-        unit = unit,
-        auraKind = auraKind,
-        caster = entry.caster == "MINE" and "MINE" or "ANY",
-        enabled = entry.enabled ~= false,
+        spellID = spellID, kind = kind, trigger = trigger, unit = unit,
+        auraKind = auraKind, caster = entry.caster == "MINE" and "MINE" or "ANY",
+        enabled = entry.enabled ~= false, groupId = nil,
+        point = "CENTER", relativePoint = "CENTER", x = 0, y = -140,
+        size = 36, showCountdown = true, showBorder = true,
+        showStacks = true, locked = true,
     }
 end
 
@@ -185,9 +184,9 @@ function ns.ReadPreview(now)
     end
     if #entries == 0 then
         entries = {
-            { spellID = 30823, kind = "BUFF", unit = "player", auraKind = "BUFF" },
-            { spellID = 24398, kind = "BUFF", unit = "player", auraKind = "BUFF" },
-            { spellID = 1715, kind = "DEBUFF", unit = "target", auraKind = "DEBUFF" },
+            { id = -1, spellID = 30823, kind = "BUFF", unit = "player", auraKind = "BUFF", size = 36, point = "CENTER", relativePoint = "CENTER", x = -44, y = -140, showCountdown = true, showBorder = true, showStacks = true, locked = true },
+            { id = -2, spellID = 24398, kind = "BUFF", unit = "player", auraKind = "BUFF", size = 36, point = "CENTER", relativePoint = "CENTER", x = 0, y = -140, showCountdown = true, showBorder = true, showStacks = true, locked = true },
+            { id = -3, spellID = 1715, kind = "DEBUFF", unit = "target", auraKind = "DEBUFF", size = 36, point = "CENTER", relativePoint = "CENTER", x = 44, y = -140, showCountdown = true, showBorder = true, showStacks = true, locked = true },
         }
     end
     local result = {}

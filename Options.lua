@@ -1,27 +1,24 @@
 local ADDON_NAME, ns = ...
 
-local panel, spellTab, settingsTab, testButton, spellInput, statusText
-local activeTab = "spells"
-local refreshers = {}
-local page = 1
-local PAGE_SIZE = 5
+local panel, panes, testButton, spellInput, groupInput, statusText, groupStatus
+local activePage = "spells"
+local selectedEntryID, selectedGroupID
+local spellPage, groupPage, memberPage = 1, 1, 1
+local PAGE_SIZE, GROUP_PAGE_SIZE, MEMBER_PAGE_SIZE = 5, 6, 4
 local form = { kind = "BUFF", unit = "player", caster = "ANY", trigger = "AURA", auraKind = "BUFF" }
-local selectors = {}
-local rows = {}
+local widgets = { spellRows = {}, groupRows = {}, memberRows = {} }
 
 local function Meta(key)
-    if C_AddOns and C_AddOns.GetAddOnMetadata then
-        return C_AddOns.GetAddOnMetadata(ADDON_NAME, key)
-    end
+    if C_AddOns and C_AddOns.GetAddOnMetadata then return C_AddOns.GetAddOnMetadata(ADDON_NAME, key) end
     if GetAddOnMetadata then return GetAddOnMetadata(ADDON_NAME, key) end
 end
 
-local function Button(parent, text, x, y, width, height, fn)
+local function Button(parent, text, x, y, width, height, callback)
     local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     b:SetSize(width, height or 26)
     b:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
     b:SetText(text)
-    b:SetScript("OnClick", fn)
+    b:SetScript("OnClick", callback)
     return b
 end
 
@@ -33,257 +30,479 @@ local function Label(parent, text, x, y, width, font)
     return s
 end
 
-local function SetStatus(message, bad)
-    if not statusText then return end
-    statusText:SetText(message or "")
-    if bad then statusText:SetTextColor(1, .42, .42)
-    else statusText:SetTextColor(.58, .85, .62) end
+local function Checkbox(parent, caption, x, y, callback)
+    local check = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+    check:SetSize(27, 27)
+    check:SetPoint("TOPLEFT", x, y)
+    local label = Label(parent, caption, x + 30, y - 6, 225)
+    check:SetScript("OnClick", function(self) callback(self:GetChecked() == true) end)
+    return check, label
 end
 
-local function RefreshSelectors()
-    local names = { BUFF = "Buff", DEBUFF = "Debuff", PROC = "Proc" }
-    if selectors.kind then selectors.kind:SetText("Type: " .. names[form.kind]) end
-    if selectors.unit then selectors.unit:SetText("Unit: " .. form.unit) end
-    if selectors.caster then selectors.caster:SetText("Caster: " .. (form.caster == "MINE" and "Mine" or "Any")) end
-    if selectors.trigger then
-        local display = { AURA = "Aura", OVERPOWER = "Overpower", COUNTERATTACK = "Counterattack" }
-        selectors.trigger:SetText("Trigger: " .. display[form.trigger])
-        selectors.trigger:SetShown(form.kind == "PROC")
+local function Slider(parent, title, x, y, low, high, callback)
+    local slider = CreateFrame("Slider", nil, parent, "OptionsSliderTemplate")
+    slider:SetPoint("TOPLEFT", x, y)
+    slider:SetSize(480, 18)
+    slider:SetMinMaxValues(low, high)
+    slider:SetValueStep(1)
+    if slider.SetObeyStepOnDrag then slider:SetObeyStepOnDrag(true) end
+    local caption = Label(parent, title, x, y + 30, 490)
+    slider.updating = false
+    slider:SetScript("OnValueChanged", function(self, value)
+        if self.updating then return end
+        local rounded = math.floor(value + .5)
+        caption:SetText(title .. ": " .. rounded)
+        callback(rounded)
+    end)
+    function slider:Sync(value)
+        self.updating = true
+        self:SetValue(value)
+        self.updating = false
+        caption:SetText(title .. ": " .. value)
     end
-    if selectors.auraKind then
-        selectors.auraKind:SetText("Aura: " .. (form.auraKind == "BUFF" and "Buff" or "Debuff"))
-        selectors.auraKind:SetShown(form.kind == "PROC" and form.trigger == "AURA")
-    end
-    if selectors.unit then selectors.unit:SetEnabled(form.kind ~= "PROC" or form.trigger == "AURA") end
-    if selectors.caster then selectors.caster:SetEnabled(form.kind ~= "PROC" or form.trigger == "AURA") end
+    slider.caption = caption
+    return slider
 end
 
-local function Cycle(field, options)
-    local current = form[field]
-    local nextIndex = 1
+local function SetStatus(label, message, bad)
+    if not label then return end
+    label:SetText(message or "")
+    if bad then label:SetTextColor(1, .42, .42)
+    else label:SetTextColor(.58, .85, .62) end
+end
+
+local function CycleValue(current, options)
     for i, value in ipairs(options) do
-        if value == current then nextIndex = i % #options + 1; break end
+        if value == current then return options[i % #options + 1] end
     end
-    form[field] = options[nextIndex]
+    return options[1]
+end
+
+local function SelectPage(name)
+    activePage = name
+    if ns.RefreshOptions then ns.RefreshOptions() end
+end
+
+local function OpenEntry(id)
+    if not ns.FindEntry(id) then return end
+    selectedEntryID = id
+    SelectPage("entry")
+end
+
+local function OpenGroup(id)
+    if not ns.FindGroup(id) then return end
+    selectedGroupID = id
+    memberPage = 1
+    SelectPage("group")
+end
+
+local function RefreshForm()
+    local typeNames = { BUFF = "Buff", DEBUFF = "Debuff", PROC = "Proc" }
+    local triggerNames = { AURA = "Aura", OVERPOWER = "Overpower", COUNTERATTACK = "Counterattack" }
+    widgets.formKind:SetText("Type: " .. typeNames[form.kind])
+    widgets.formUnit:SetText("Unit: " .. form.unit)
+    widgets.formCaster:SetText("Caster: " .. (form.caster == "MINE" and "Mine" or "Any"))
+    widgets.formTrigger:SetText("Trigger: " .. triggerNames[form.trigger])
+    widgets.formTrigger:SetShown(form.kind == "PROC")
+    widgets.formAura:SetText("Aura: " .. (form.auraKind == "BUFF" and "Buff" or "Debuff"))
+    widgets.formAura:SetShown(form.kind == "PROC" and form.trigger == "AURA")
+    widgets.formUnit:SetEnabled(form.kind ~= "PROC" or form.trigger == "AURA")
+    widgets.formCaster:SetEnabled(form.kind ~= "PROC" or form.trigger == "AURA")
+end
+
+local function CycleForm(field, options)
+    form[field] = CycleValue(form[field], options)
     if field == "kind" then
-        if form.kind == "BUFF" then form.auraKind = "BUFF" end
-        if form.kind == "DEBUFF" then form.auraKind = "DEBUFF" end
-    end
-    if field == "trigger" then
+        if form.kind == "BUFF" or form.kind == "DEBUFF" then form.auraKind = form.kind end
+    elseif field == "trigger" then
         if form.trigger == "OVERPOWER" then spellInput:SetText("7384") end
         if form.trigger == "COUNTERATTACK" then spellInput:SetText("19306") end
     end
-    RefreshSelectors()
+    RefreshForm()
 end
 
 local function AddSpell()
     local id = tonumber(spellInput:GetText())
     if not id or id < 1 or id ~= math.floor(id) then
-        SetStatus("Enter a valid numeric Spell ID.", true)
+        SetStatus(statusText, "Enter a valid numeric Spell ID.", true)
         return
     end
-    local entry = {
+    local ok, message = ns.AddEntry({
         spellID = id, kind = form.kind, unit = form.unit, caster = form.caster,
         trigger = form.trigger, auraKind = form.kind == "PROC" and form.auraKind or form.kind,
         enabled = true,
-    }
-    local ok, message = ns.AddEntry(entry)
-    SetStatus(message, not ok)
+    })
+    SetStatus(statusText, message, not ok)
     if ok then
         spellInput:SetText("")
         spellInput:ClearFocus()
-        page = math.ceil(#ns.db.tracked / PAGE_SIZE)
+        spellPage = math.ceil(#ns.db.tracked / PAGE_SIZE)
         ns.RefreshOptions()
     end
 end
 
-local function BuildSpells()
-    spellTab = CreateFrame("Frame", nil, panel)
-    spellTab:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -111)
-    spellTab:SetSize(565, 410)
+local function NewRow(parent, y, width)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetPoint("TOPLEFT", 20, y)
+    row:SetSize(width, 36)
+    local bg = row:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+    bg:SetVertexColor(.18, .16, .22, .56)
+    return row
+end
 
-    Label(spellTab, "Add spell", 20, -7, 200)
-    Label(spellTab, "Spell ID", 20, -33)
-    spellInput = CreateFrame("EditBox", nil, spellTab, "InputBoxTemplate")
-    spellInput:SetSize(113, 25)
-    spellInput:SetPoint("TOPLEFT", spellTab, "TOPLEFT", 25, -54)
+local function BuildSpells(pane)
+    Label(pane, "Add spell", 20, -5)
+    Label(pane, "Spell ID", 20, -32)
+    spellInput = CreateFrame("EditBox", nil, pane, "InputBoxTemplate")
+    spellInput:SetSize(117, 25)
+    spellInput:SetPoint("TOPLEFT", 25, -52)
     spellInput:SetAutoFocus(false)
     spellInput:SetNumeric(true)
     spellInput:SetMaxLetters(9)
     spellInput:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     spellInput:SetScript("OnEnterPressed", AddSpell)
-
-    selectors.kind = Button(spellTab, "", 148, -53, 118, 26, function()
-        Cycle("kind", { "BUFF", "DEBUFF", "PROC" })
-    end)
-    selectors.unit = Button(spellTab, "", 271, -53, 125, 26, function()
-        Cycle("unit", { "player", "target", "focus", "pet" })
-    end)
-    selectors.caster = Button(spellTab, "", 401, -53, 141, 26, function()
-        Cycle("caster", { "ANY", "MINE" })
-    end)
-    selectors.trigger = Button(spellTab, "", 20, -87, 190, 25, function()
-        Cycle("trigger", { "AURA", "OVERPOWER", "COUNTERATTACK" })
-    end)
-    selectors.auraKind = Button(spellTab, "", 220, -87, 156, 25, function()
-        Cycle("auraKind", { "BUFF", "DEBUFF" })
-    end)
-    Button(spellTab, "Add", 405, -87, 137, 25, AddSpell)
-    statusText = Label(spellTab, "", 20, -123, 520, "GameFontHighlightSmall")
-
-    local line = spellTab:CreateTexture(nil, "ARTWORK")
-    line:SetTexture("Interface\\Buttons\\WHITE8X8")
-    line:SetVertexColor(.43, .37, .52, .6)
-    line:SetPoint("TOPLEFT", 19, -149)
-    line:SetSize(526, 1)
-    Label(spellTab, "Tracked spells", 20, -160, 300)
-
-    for rowNumber = 1, PAGE_SIZE do
-        local index = rowNumber
-        local y = -188 - (rowNumber - 1) * 38
-        local row = CreateFrame("Frame", nil, spellTab)
-        row:SetPoint("TOPLEFT", 20, y)
-        row:SetSize(522, 36)
-        local bg = row:CreateTexture(nil, "BACKGROUND")
-        bg:SetAllPoints(row)
-        bg:SetTexture("Interface\\Buttons\\WHITE8X8")
-        bg:SetVertexColor(.18, .16, .22, rowNumber % 2 == 0 and .68 or .45)
+    widgets.formKind = Button(pane, "", 150, -52, 126, 26, function() CycleForm("kind", { "BUFF", "DEBUFF", "PROC" }) end)
+    widgets.formUnit = Button(pane, "", 282, -52, 126, 26, function() CycleForm("unit", { "player", "target", "focus", "pet" }) end)
+    widgets.formCaster = Button(pane, "", 414, -52, 145, 26, function() CycleForm("caster", { "ANY", "MINE" }) end)
+    widgets.formTrigger = Button(pane, "", 20, -85, 196, 26, function() CycleForm("trigger", { "AURA", "OVERPOWER", "COUNTERATTACK" }) end)
+    widgets.formAura = Button(pane, "", 226, -85, 160, 26, function() CycleForm("auraKind", { "BUFF", "DEBUFF" }) end)
+    Button(pane, "Add", 414, -85, 145, 26, AddSpell)
+    statusText = Label(pane, "", 20, -120, 530, "GameFontHighlightSmall")
+    Label(pane, "Tracked spells — click a spell to edit", 20, -152, 530)
+    for i = 1, PAGE_SIZE do
+        local row = NewRow(pane, -180 - (i - 1) * 40, 540)
         row.icon = row:CreateTexture(nil, "ARTWORK")
         row.icon:SetSize(29, 29)
         row.icon:SetPoint("LEFT", 4, 0)
-        row.name = Label(row, "", 39, -3, 258, "GameFontHighlight")
-        row.description = Label(row, "", 39, -19, 322, "GameFontHighlightSmall")
-        row.toggle = Button(row, "On", 385, -5, 55, 25, function()
-            local entryIndex = (page - 1) * PAGE_SIZE + index
-            local entry = ns.db.tracked[entryIndex]
-            if entry then
-                entry.enabled = not entry.enabled
-                ns.EntriesChanged()
-            end
+        row.name = Label(row, "", 40, -3, 320, "GameFontHighlight")
+        row.desc = Label(row, "", 40, -20, 330, "GameFontHighlightSmall")
+        row.edit = Button(row, "", 35, -3, 327, 31, function()
+            local entry = ns.db.tracked[(spellPage - 1) * PAGE_SIZE + i]
+            if entry then OpenEntry(entry.id) end
         end)
-        row.remove = Button(row, "X", 446, -5, 65, 25, function()
-            local entryIndex = (page - 1) * PAGE_SIZE + index
-            ns.RemoveEntry(entryIndex)
-            if (page - 1) * PAGE_SIZE >= #ns.db.tracked then
-                page = math.max(1, page - 1)
-            end
-            ns.RefreshOptions()
+        -- A transparent click surface still uses the standard button highlight; text is above it.
+        row.edit:SetAlpha(0.04)
+        row.edit:SetFrameLevel(row:GetFrameLevel() + 1)
+        row.toggle = Button(row, "On", 378, -5, 61, 25, function()
+            local entry = ns.db.tracked[(spellPage - 1) * PAGE_SIZE + i]
+            if entry then entry.enabled = not entry.enabled; ns.EntriesChanged() end
         end)
-        rows[index] = row
+        row.remove = Button(row, "X", 448, -5, 77, 25, function()
+            local entry = ns.db.tracked[(spellPage - 1) * PAGE_SIZE + i]
+            if entry then ns.RemoveEntry(entry.id) end
+        end)
+        widgets.spellRows[i] = row
     end
-    local prev = Button(spellTab, "<", 20, -394, 34, 24, function()
-        page = math.max(1, page - 1)
-        ns.RefreshOptions()
+    widgets.spellPrev = Button(pane, "<", 20, -391, 36, 24, function()
+        spellPage = math.max(1, spellPage - 1); ns.RefreshOptions()
     end)
-    local pageLabel = Label(spellTab, "1 / 1", 65, -397, 140, "GameFontHighlightSmall")
-    local next = Button(spellTab, ">", 159, -394, 34, 24, function()
-        page = page + 1
-        ns.RefreshOptions()
+    widgets.spellPages = Label(pane, "", 67, -395, 190, "GameFontHighlightSmall")
+    widgets.spellNext = Button(pane, ">", 215, -391, 36, 24, function()
+        spellPage = spellPage + 1; ns.RefreshOptions()
     end)
-    Label(spellTab, "Click Type / Unit / Caster to cycle options.", 216, -399, 325, "GameFontHighlightSmall")
+    Label(pane, "Each spell has its own display and position.", 20, -433, 540, "GameFontHighlightSmall")
+end
 
-    refreshers[#refreshers + 1] = function()
-        local total = #ns.db.tracked
-        local pages = math.max(1, math.ceil(total / PAGE_SIZE))
-        page = math.min(page, pages)
-        pageLabel:SetText(page .. " / " .. pages .. "   (" .. total .. " total)")
-        prev:SetEnabled(page > 1)
-        next:SetEnabled(page < pages)
-        RefreshSelectors()
-        for i, row in ipairs(rows) do
-            local entry = ns.db.tracked[(page - 1) * PAGE_SIZE + i]
-            row:SetShown(entry ~= nil)
-            if entry then
-                local name, icon = ns.SpellInfo(entry.spellID)
-                row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
-                row.name:SetText((name or "Unknown") .. " |cff9f7bff[" .. entry.spellID .. "]|r")
-                local detail = entry.kind .. " · "
-                if entry.kind == "PROC" and entry.trigger ~= "AURA" then
-                    detail = detail .. entry.trigger
-                else
-                    detail = detail .. entry.unit .. " · " .. entry.auraKind .. " · " .. entry.caster
-                end
-                row.description:SetText(detail)
-                row.toggle:SetText(entry.enabled and "On" or "Off")
-            end
+local function BuildGroups(pane)
+    Label(pane, "Create group", 20, -6)
+    groupInput = CreateFrame("EditBox", nil, pane, "InputBoxTemplate")
+    groupInput:SetSize(335, 25)
+    groupInput:SetPoint("TOPLEFT", 25, -33)
+    groupInput:SetAutoFocus(false)
+    groupInput:SetMaxLetters(30)
+    groupInput:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    local function AddGroup()
+        local ok, message, id = ns.CreateGroup(groupInput:GetText())
+        SetStatus(groupStatus, message, not ok)
+        if ok then
+            groupInput:SetText("")
+            groupInput:ClearFocus()
+            groupPage = math.ceil(#ns.db.groups / GROUP_PAGE_SIZE)
+            if id then OpenGroup(id) end
+        end
+    end
+    groupInput:SetScript("OnEnterPressed", AddGroup)
+    Button(pane, "Create", 412, -33, 147, 26, AddGroup)
+    groupStatus = Label(pane, "", 20, -71, 530, "GameFontHighlightSmall")
+    Label(pane, "Groups — click a group to edit", 20, -102, 530)
+    for i = 1, GROUP_PAGE_SIZE do
+        local row = NewRow(pane, -133 - (i - 1) * 44, 540)
+        row.name = Label(row, "", 10, -5, 385, "GameFontHighlight")
+        row.desc = Label(row, "", 10, -21, 405, "GameFontHighlightSmall")
+        row.edit = Button(row, "Edit >", 420, -5, 105, 25, function()
+            local group = ns.db.groups[(groupPage - 1) * GROUP_PAGE_SIZE + i]
+            if group then OpenGroup(group.id) end
+        end)
+        widgets.groupRows[i] = row
+    end
+    widgets.groupPrev = Button(pane, "<", 20, -412, 36, 24, function()
+        groupPage = math.max(1, groupPage - 1); ns.RefreshOptions()
+    end)
+    widgets.groupPages = Label(pane, "", 67, -416, 190, "GameFontHighlightSmall")
+    widgets.groupNext = Button(pane, ">", 215, -412, 36, 24, function()
+        groupPage = groupPage + 1; ns.RefreshOptions()
+    end)
+    Label(pane, "Move spells into a group from their own settings page.", 20, -450, 545, "GameFontHighlightSmall")
+end
+
+local function ChangeEntry(field, options)
+    local entry = ns.FindEntry(selectedEntryID)
+    if not entry then return end
+    entry[field] = CycleValue(entry[field], options)
+    if field == "kind" then
+        if entry.kind == "BUFF" or entry.kind == "DEBUFF" then
+            entry.trigger, entry.auraKind = "AURA", entry.kind
+        end
+    elseif field == "trigger" then
+        if entry.trigger == "OVERPOWER" then entry.spellID = 7384 end
+        if entry.trigger == "COUNTERATTACK" then entry.spellID = 19306 end
+    end
+    ns.EntriesChanged()
+end
+
+local function BuildEntry(pane)
+    widgets.entryIcon = pane:CreateTexture(nil, "ARTWORK")
+    widgets.entryIcon:SetSize(36, 36)
+    widgets.entryIcon:SetPoint("TOPLEFT", 22, -6)
+    widgets.entryTitle = Label(pane, "", 68, -7, 420, "GameFontNormalLarge")
+    widgets.entryID = Label(pane, "", 69, -30, 405, "GameFontHighlightSmall")
+    widgets.entryKind = Button(pane, "", 20, -62, 166, 27, function() ChangeEntry("kind", { "BUFF", "DEBUFF", "PROC" }) end)
+    widgets.entryUnit = Button(pane, "", 195, -62, 166, 27, function() ChangeEntry("unit", { "player", "target", "focus", "pet" }) end)
+    widgets.entryCaster = Button(pane, "", 370, -62, 190, 27, function() ChangeEntry("caster", { "ANY", "MINE" }) end)
+    widgets.entryTrigger = Button(pane, "", 20, -99, 263, 27, function() ChangeEntry("trigger", { "AURA", "OVERPOWER", "COUNTERATTACK" }) end)
+    widgets.entryAura = Button(pane, "", 292, -99, 267, 27, function() ChangeEntry("auraKind", { "BUFF", "DEBUFF" }) end)
+    widgets.entryGroup = Button(pane, "", 20, -140, 540, 29, function()
+        local entry = ns.FindEntry(selectedEntryID)
+        if not entry then return end
+        local groups = { false }
+        for _, group in ipairs(ns.db.groups) do groups[#groups + 1] = group.id end
+        local current = entry.groupId or false
+        local nextID = CycleValue(current, groups)
+        ns.AssignGroup(entry.id, nextID or nil)
+    end)
+    widgets.entryCount = Checkbox(pane, "Cooldown Count", 20, -188, function(checked)
+        local entry = ns.FindEntry(selectedEntryID)
+        if entry then entry.showCountdown = checked; ns.Refresh() end
+    end)
+    widgets.entryBorder = Checkbox(pane, "Border", 300, -188, function(checked)
+        local entry = ns.FindEntry(selectedEntryID)
+        if entry then entry.showBorder = checked; ns.Refresh() end
+    end)
+    widgets.entryStacks = Checkbox(pane, "Show stacks / charges", 20, -227, function(checked)
+        local entry = ns.FindEntry(selectedEntryID)
+        if entry then entry.showStacks = checked; ns.Refresh() end
+    end)
+    widgets.entryLock, widgets.entryLockLabel = Checkbox(pane, "Lock position (solo only)", 300, -227, function(checked)
+        local entry = ns.FindEntry(selectedEntryID)
+        if entry and not entry.groupId then entry.locked = checked; ns.Refresh() end
+    end)
+    widgets.entrySize = Slider(pane, "Icon size", 28, -333, 18, 100, function(value)
+        local entry = ns.FindEntry(selectedEntryID)
+        if entry then entry.size = value; ns.Refresh() end
+    end)
+    widgets.entryHint = Label(pane, "Unlock and drag the icon to set its position.", 20, -372, 540, "GameFontHighlightSmall")
+    Button(pane, "Remove spell", 20, -426, 200, 28, function()
+        local id = selectedEntryID
+        selectedEntryID = nil
+        ns.RemoveEntry(id)
+        SelectPage("spells")
+    end)
+    Label(pane, "To edit Spell ID, remove and add the spell again.", 240, -433, 325, "GameFontHighlightSmall")
+end
+
+local function BuildGroup(pane)
+    widgets.groupTitle = Label(pane, "", 20, -9, 310, "GameFontNormalLarge")
+    widgets.groupLock = Checkbox(pane, "Lock position", 328, -5, function(checked)
+        local group = ns.FindGroup(selectedGroupID)
+        if group then group.locked = checked; ns.Refresh() end
+    end)
+    widgets.groupOrientation = Button(pane, "", 20, -54, 264, 27, function()
+        local group = ns.FindGroup(selectedGroupID)
+        if group then group.orientation = CycleValue(group.orientation, { "HORIZONTAL", "VERTICAL" }); ns.EntriesChanged() end
+    end)
+    widgets.groupLayout = Button(pane, "", 295, -54, 264, 27, function()
+        local group = ns.FindGroup(selectedGroupID)
+        if group then group.layout = CycleValue(group.layout, { "COMPACT", "FIXED" }); ns.EntriesChanged() end
+    end)
+    widgets.groupAlignment = Button(pane, "", 20, -90, 264, 27, function()
+        local group = ns.FindGroup(selectedGroupID)
+        if group then group.align = CycleValue(group.align, { "CENTER", "START", "END" }); ns.EntriesChanged() end
+    end)
+    widgets.groupSizeMode = Button(pane, "", 295, -90, 264, 27, function()
+        local group = ns.FindGroup(selectedGroupID)
+        if group then group.sizeMode = CycleValue(group.sizeMode, { "INDIVIDUAL", "UNIFORM" }); ns.EntriesChanged() end
+    end)
+    widgets.groupSpacing = Slider(pane, "Spacing", 28, -164, 0, 24, function(value)
+        local group = ns.FindGroup(selectedGroupID)
+        if group then group.spacing = value; ns.Refresh() end
+    end)
+    widgets.groupSize = Slider(pane, "Group icon size", 28, -236, 18, 100, function(value)
+        local group = ns.FindGroup(selectedGroupID)
+        if group then group.groupSize = value; ns.Refresh() end
+    end)
+    widgets.memberHeading = Label(pane, "Spells in group", 20, -266, 520)
+    for i = 1, MEMBER_PAGE_SIZE do
+        local row = NewRow(pane, -288 - (i - 1) * 36, 540)
+        row:SetHeight(33)
+        row.name = Label(row, "", 9, -8, 270, "GameFontHighlight")
+        row.edit = Button(row, "Edit", 311, -4, 75, 24, function()
+            local group = ns.FindGroup(selectedGroupID)
+            local id = group and group.members[(memberPage - 1) * MEMBER_PAGE_SIZE + i]
+            if id then OpenEntry(id) end
+        end)
+        row.up = Button(row, "^", 392, -4, 62, 24, function()
+            local group = ns.FindGroup(selectedGroupID)
+            local id = group and group.members[(memberPage - 1) * MEMBER_PAGE_SIZE + i]
+            if id then ns.MoveMember(group.id, id, -1) end
+        end)
+        row.down = Button(row, "v", 461, -4, 63, 24, function()
+            local group = ns.FindGroup(selectedGroupID)
+            local id = group and group.members[(memberPage - 1) * MEMBER_PAGE_SIZE + i]
+            if id then ns.MoveMember(group.id, id, 1) end
+        end)
+        widgets.memberRows[i] = row
+    end
+    widgets.memberPrev = Button(pane, "<", 20, -438, 34, 24, function()
+        memberPage = math.max(1, memberPage - 1); ns.RefreshOptions()
+    end)
+    widgets.memberPages = Label(pane, "", 65, -441, 155, "GameFontHighlightSmall")
+    widgets.memberNext = Button(pane, ">", 180, -438, 34, 24, function()
+        memberPage = memberPage + 1; ns.RefreshOptions()
+    end)
+    Button(pane, "Delete group", 355, -437, 205, 26, function()
+        local id = selectedGroupID
+        selectedGroupID = nil
+        ns.DeleteGroup(id) -- Members become independent icons; spells are not deleted.
+        SelectPage("groups")
+    end)
+end
+
+local function RefreshSpells()
+    local total = #ns.db.tracked
+    local pages = math.max(1, math.ceil(total / PAGE_SIZE))
+    spellPage = math.max(1, math.min(spellPage, pages))
+    widgets.spellPrev:SetEnabled(spellPage > 1)
+    widgets.spellNext:SetEnabled(spellPage < pages)
+    widgets.spellPages:SetText(spellPage .. " / " .. pages .. "   (" .. total .. " total)")
+    RefreshForm()
+    for i, row in ipairs(widgets.spellRows) do
+        local entry = ns.db.tracked[(spellPage - 1) * PAGE_SIZE + i]
+        row:SetShown(entry ~= nil)
+        if entry then
+            local name, icon = ns.SpellInfo(entry.spellID)
+            row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+            row.name:SetText((name or "Unknown") .. " |cff9f7bff[" .. entry.spellID .. "]|r")
+            local group = ns.FindGroup(entry.groupId)
+            row.desc:SetText(entry.kind .. " · " .. (group and ("Group: " .. group.name) or (entry.unit .. " · " .. entry.auraKind .. " · " .. entry.caster)))
+            row.toggle:SetText(entry.enabled and "On" or "Off")
         end
     end
 end
 
-local function Save(key, value)
-    ns.db[key] = value
-    if key == "locked" then ns.ApplyMovability() end
-    ns.Refresh()
-    if ns.RefreshOptions then ns.RefreshOptions() end
-end
-
-local function Checkbox(parent, text, key, x, y)
-    local check = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
-    check:SetSize(27, 27)
-    check:SetPoint("TOPLEFT", x, y)
-    local caption = Label(parent, text, x + 31, y - 6, 200)
-    check:SetScript("OnClick", function(self) Save(key, self:GetChecked() == true) end)
-    refreshers[#refreshers + 1] = function() check:SetChecked(ns.db[key]) end
-    return check, caption
-end
-
-local function Slider(parent, title, key, low, high, y)
-    local slider = CreateFrame("Slider", nil, parent, "OptionsSliderTemplate")
-    slider:SetPoint("TOPLEFT", 28, y)
-    slider:SetSize(332, 18)
-    slider:SetMinMaxValues(low, high)
-    slider:SetValueStep(1)
-    if slider.SetObeyStepOnDrag then slider:SetObeyStepOnDrag(true) end
-    local label = Label(parent, title, 28, y + 29, 420)
-    local updating = false
-    slider:SetScript("OnValueChanged", function(_, value)
-        if updating or not ns.db then return end
-        local rounded = math.floor(value + 0.5)
-        label:SetText(title .. ": " .. rounded)
-        Save(key, rounded)
-    end)
-    refreshers[#refreshers + 1] = function()
-        updating = true
-        slider:SetValue(ns.db[key])
-        updating = false
-        label:SetText(title .. ": " .. ns.db[key])
+local function RefreshGroups()
+    local total = #ns.db.groups
+    local pages = math.max(1, math.ceil(total / GROUP_PAGE_SIZE))
+    groupPage = math.max(1, math.min(groupPage, pages))
+    widgets.groupPrev:SetEnabled(groupPage > 1)
+    widgets.groupNext:SetEnabled(groupPage < pages)
+    widgets.groupPages:SetText(groupPage .. " / " .. pages .. "   (" .. total .. " total)")
+    for i, row in ipairs(widgets.groupRows) do
+        local group = ns.db.groups[(groupPage - 1) * GROUP_PAGE_SIZE + i]
+        row:SetShown(group ~= nil)
+        if group then
+            row.name:SetText(group.name)
+            row.desc:SetText(#group.members .. " spells · " .. group.orientation .. " · " .. group.layout)
+        end
     end
 end
 
-local function BuildSettings()
-    settingsTab = CreateFrame("Frame", nil, panel)
-    settingsTab:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -111)
-    settingsTab:SetSize(565, 410)
-    Label(settingsTab, "Display", 20, -7)
-    Checkbox(settingsTab, "Cooldown Count", "showCountdown", 20, -43)
-    Checkbox(settingsTab, "Border", "showBorder", 292, -43)
-    Checkbox(settingsTab, "Lock position", "locked", 20, -85)
-    Label(settingsTab, "Unlock to drag the icons. Empty groups show a move handle.", 25, -128, 515, "GameFontHighlightSmall")
-    Slider(settingsTab, "Icon size", "size", 18, 64, -194)
-    Slider(settingsTab, "Spacing", "spacing", 0, 20, -278)
-    Button(settingsTab, "Reset visual settings", 20, -345, 242, 28, function()
-        ns.ResetSettings()
-        SetStatus("Visual settings reset.")
-    end)
-    Label(settingsTab, "Reset does not delete tracked spells.", 280, -354, 260, "GameFontHighlightSmall")
+local function RefreshEntry()
+    local entry = ns.FindEntry(selectedEntryID)
+    if not entry then SelectPage("spells"); return end
+    local name, icon = ns.SpellInfo(entry.spellID)
+    widgets.entryIcon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+    widgets.entryTitle:SetText(name or "Unknown spell")
+    widgets.entryID:SetText("Spell ID: " .. entry.spellID)
+    widgets.entryKind:SetText("Type: " .. entry.kind)
+    widgets.entryUnit:SetText("Unit: " .. entry.unit)
+    widgets.entryCaster:SetText("Caster: " .. (entry.caster == "MINE" and "Mine" or "Any"))
+    widgets.entryTrigger:SetText("Trigger: " .. entry.trigger)
+    widgets.entryAura:SetText("Aura: " .. entry.auraKind)
+    widgets.entryTrigger:SetShown(entry.kind == "PROC")
+    widgets.entryAura:SetShown(entry.kind == "PROC" and entry.trigger == "AURA")
+    local usesAura = entry.kind ~= "PROC" or entry.trigger == "AURA"
+    widgets.entryUnit:SetEnabled(usesAura)
+    widgets.entryCaster:SetEnabled(usesAura)
+    local group = ns.FindGroup(entry.groupId)
+    widgets.entryGroup:SetText("Group: " .. (group and group.name or "Solo") .. "   (click to change)")
+    widgets.entryCount:SetChecked(entry.showCountdown)
+    widgets.entryBorder:SetChecked(entry.showBorder)
+    widgets.entryStacks:SetChecked(entry.showStacks)
+    widgets.entryLock:SetChecked(group and group.locked or (not group and entry.locked))
+    widgets.entryLock:SetEnabled(not group)
+    widgets.entryLockLabel:SetText(group and "Lock position (controlled by group)" or "Lock position")
+    widgets.entrySize:Sync(entry.size)
+    widgets.entrySize:SetEnabled(not group or group.sizeMode == "INDIVIDUAL")
+    widgets.entryHint:SetText(group and "Drag the group. Icon size is overridden in Uniform mode." or "Unlock and drag this icon to set its position.")
 end
 
-local function ShowTab(which)
-    activeTab = which
-    spellTab:SetShown(which == "spells")
-    settingsTab:SetShown(which == "settings")
-    ns.RefreshOptions()
+local function RefreshGroup()
+    local group = ns.FindGroup(selectedGroupID)
+    if not group then SelectPage("groups"); return end
+    widgets.groupTitle:SetText(group.name .. "  (" .. #group.members .. ")")
+    widgets.groupLock:SetChecked(group.locked)
+    widgets.groupOrientation:SetText("Orientation: " .. (group.orientation == "VERTICAL" and "Vertical" or "Horizontal"))
+    widgets.groupLayout:SetText("Layout: " .. (group.layout == "FIXED" and "Fixed" or "Compact"))
+    local alignName
+    if group.align == "CENTER" then alignName = "Center"
+    elseif group.orientation == "VERTICAL" then alignName = group.align == "START" and "Left" or "Right"
+    else alignName = group.align == "START" and "Top" or "Bottom" end
+    widgets.groupAlignment:SetText("Alignment: " .. alignName)
+    widgets.groupSizeMode:SetText("Icon size: " .. (group.sizeMode == "UNIFORM" and "Uniform" or "Individual"))
+    widgets.groupSpacing:Sync(group.spacing)
+    widgets.groupSize:Sync(group.groupSize)
+    widgets.groupSize:SetShown(group.sizeMode == "UNIFORM")
+    widgets.groupSize.caption:SetShown(group.sizeMode == "UNIFORM")
+    widgets.memberHeading:SetText("Spells in group — " .. #group.members .. " total")
+    local pages = math.max(1, math.ceil(#group.members / MEMBER_PAGE_SIZE))
+    memberPage = math.max(1, math.min(memberPage, pages))
+    widgets.memberPrev:SetEnabled(memberPage > 1)
+    widgets.memberNext:SetEnabled(memberPage < pages)
+    widgets.memberPages:SetText(memberPage .. " / " .. pages)
+    for i, row in ipairs(widgets.memberRows) do
+        local index = (memberPage - 1) * MEMBER_PAGE_SIZE + i
+        local id = group.members[index]
+        local entry = id and ns.FindEntry(id)
+        row:SetShown(entry ~= nil)
+        if entry then
+            local name = ns.SpellInfo(entry.spellID)
+            row.name:SetText((name or "Unknown") .. " [" .. entry.spellID .. "]")
+            row.up:SetEnabled(index > 1)
+            row.down:SetEnabled(index < #group.members)
+        end
+    end
 end
 
 function ns.RefreshOptions()
     if not panel or not ns.db then return end
-    for _, fn in ipairs(refreshers) do fn() end
-    if testButton then testButton:SetText(ns.testMode and "Stop test" or "Start test") end
+    panes.spells:SetShown(activePage == "spells")
+    panes.groups:SetShown(activePage == "groups")
+    panes.entry:SetShown(activePage == "entry")
+    panes.group:SetShown(activePage == "group")
+    widgets.spellsTab:SetText(activePage == "entry" and "< Back to Spells" or "Spells")
+    widgets.groupsTab:SetText(activePage == "group" and "< Back to Groups" or "Groups")
+    if activePage == "spells" then RefreshSpells()
+    elseif activePage == "groups" then RefreshGroups()
+    elseif activePage == "entry" then RefreshEntry()
+    elseif activePage == "group" then RefreshGroup() end
+    testButton:SetText(ns.testMode and "Stop test" or "Start test")
 end
 
 local function BuildPanel()
     panel = CreateFrame("Frame", "IconOptions", UIParent, "BackdropTemplate")
-    panel:SetSize(565, 580)
+    panel:SetSize(590, 650)
     panel:SetPoint("CENTER")
     panel:SetFrameStrata("DIALOG")
     panel:SetClampedToScreen(true)
@@ -300,18 +519,27 @@ local function BuildPanel()
     })
     panel:SetBackdropColor(.08, .08, .10, .97)
     panel:SetBackdropBorderColor(.45, .38, .60)
-    local title = Label(panel, (Meta("Title") or "Icon") .. " |cff9f7bffv" .. (Meta("Version") or "0.1.0") .. "|r", 188, -14, 240, "GameFontNormalLarge")
+    local title = Label(panel, (Meta("Title") or "Icon") .. " |cff9f7bffv" .. (Meta("Version") or "0.2.0") .. "|r", 181, -14, 275, "GameFontNormalLarge")
     title:SetJustifyH("CENTER")
-    Label(panel, "Author: " .. (Meta("Author") or "Hooch"), 19, -47, 300, "GameFontHighlightSmall")
-    Button(panel, "X", 524, -12, 27, 25, function() panel:Hide() end)
-    Button(panel, "Spells", 20, -78, 260, 27, function() ShowTab("spells") end)
-    Button(panel, "Settings", 286, -78, 260, 27, function() ShowTab("settings") end)
-    BuildSpells()
-    BuildSettings()
-    testButton = Button(panel, "Start test", 20, -533, 255, 28, function() ns.SetTest(not ns.testMode) end)
-    Button(panel, "Close", 285, -533, 260, 28, function() panel:Hide() end)
+    Label(panel, "Author: " .. (Meta("Author") or "Hooch"), 19, -46, 300, "GameFontHighlightSmall")
+    Button(panel, "X", 550, -12, 27, 25, function() panel:Hide() end)
+    widgets.spellsTab = Button(panel, "Spells", 20, -77, 267, 27, function() SelectPage("spells") end)
+    widgets.groupsTab = Button(panel, "Groups", 300, -77, 267, 27, function() SelectPage("groups") end)
+    panes = {}
+    for _, name in ipairs({ "spells", "groups", "entry", "group" }) do
+        local body = CreateFrame("Frame", nil, panel)
+        body:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -111)
+        body:SetSize(590, 480)
+        panes[name] = body
+    end
+    BuildSpells(panes.spells)
+    BuildGroups(panes.groups)
+    BuildEntry(panes.entry)
+    BuildGroup(panes.group)
+    testButton = Button(panel, "Start test", 20, -600, 267, 28, function() ns.SetTest(not ns.testMode) end)
+    Button(panel, "Close", 300, -600, 267, 28, function() panel:Hide() end)
     panel:SetScript("OnShow", ns.RefreshOptions)
-    ShowTab(activeTab)
+    ns.RefreshOptions()
     panel:Hide()
 end
 

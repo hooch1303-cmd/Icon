@@ -3,9 +3,9 @@ local ADDON_NAME, ns = ...
 local WHITE = "Interface\\Buttons\\WHITE8X8"
 local FALLBACK = "Interface\\Icons\\INV_Misc_QuestionMark"
 local BORDER_COLORS = {
-    BUFF = { 0.35, 0.80, 0.45 },
-    DEBUFF = { 0.96, 0.32, 0.31 },
-    PROC = { 0.68, 0.48, 0.98 },
+    BUFF = { .35, .80, .45 },
+    DEBUFF = { .96, .32, .31 },
+    PROC = { .68, .48, .98 },
 }
 
 local function OmniCCLoaded()
@@ -13,8 +13,8 @@ local function OmniCCLoaded()
     return IsAddOnLoaded and IsAddOnLoaded("OmniCC") or false
 end
 
-local function SetCountdown(cooldown)
-    local enabled = ns.db.showCountdown
+local function SetCountdown(cooldown, entry)
+    local enabled = entry.showCountdown ~= false
     cooldown.noCooldownCount = not enabled or nil
     if cooldown.SetHideCountdownNumbers then
         cooldown:SetHideCountdownNumbers(not enabled or OmniCCLoaded())
@@ -24,178 +24,310 @@ local function SetCountdown(cooldown)
     end
 end
 
-local function SavePosition()
-    local point, _, relativePoint, x, y = ns.container:GetPoint(1)
-    ns.db.point, ns.db.relativePoint, ns.db.x, ns.db.y = point, relativePoint, x, y
+local function ApplyPosition(frame, item)
+    frame:ClearAllPoints()
+    frame:SetPoint(item.point or "CENTER", UIParent, item.relativePoint or "CENTER", item.x or 0, item.y or -140)
 end
 
-local function StartDrag()
-    if ns.db and not ns.db.locked then ns.container:StartMoving() end
+local function SavePosition(frame, item)
+    if not item then return end
+    local point, _, relativePoint, x, y = frame:GetPoint(1)
+    item.point, item.relativePoint, item.x, item.y = point, relativePoint, x, y
 end
 
-local function StopDrag()
-    ns.container:StopMovingOrSizing()
-    SavePosition()
+local function StartIconDrag(self)
+    local entry = self.entry
+    if not entry or not ns.db then return end
+    local group = ns.FindGroup(entry.groupId)
+    if group then
+        if not group.locked and self.groupFrame then self.groupFrame:StartMoving() end
+    elseif not entry.locked then
+        self:StartMoving()
+    end
 end
 
-local function CreateBorder(button)
+local function StopIconDrag(self)
+    local entry = self.entry
+    if not entry then return end
+    local group = ns.FindGroup(entry.groupId)
+    if group and self.groupFrame then
+        self.groupFrame:StopMovingOrSizing()
+        SavePosition(self.groupFrame, group)
+    elseif not group then
+        self:StopMovingOrSizing()
+        if entry.id and entry.id > 0 then SavePosition(self, entry) end
+    end
+end
+
+local function MakeBorder(button)
     local layer = CreateFrame("Frame", nil, button)
     layer:SetAllPoints(button)
     layer:SetFrameLevel(button.cooldown:GetFrameLevel() + 1)
     button.borderFrame = layer
     button.edges = {}
     local data = {
-        { "TOPLEFT", "TOPRIGHT", 2, true },
-        { "BOTTOMLEFT", "BOTTOMRIGHT", 2, true },
-        { "TOPLEFT", "BOTTOMLEFT", 2, false },
-        { "TOPRIGHT", "BOTTOMRIGHT", 2, false },
+        { "TOPLEFT", "TOPRIGHT", true },
+        { "BOTTOMLEFT", "BOTTOMRIGHT", true },
+        { "TOPLEFT", "BOTTOMLEFT", false },
+        { "TOPRIGHT", "BOTTOMRIGHT", false },
     }
     for _, points in ipairs(data) do
         local texture = layer:CreateTexture(nil, "ARTWORK")
         texture:SetTexture(WHITE)
         texture:SetPoint(points[1], layer, points[1], 0, 0)
         texture:SetPoint(points[2], layer, points[2], 0, 0)
-        if points[4] then texture:SetHeight(points[3]) else texture:SetWidth(points[3]) end
+        if points[3] then texture:SetHeight(2) else texture:SetWidth(2) end
         button.edges[#button.edges + 1] = texture
     end
 end
 
-local function MakeButton(container)
-    local button = CreateFrame("Frame", nil, container)
+local function MakeIcon()
+    local button = CreateFrame("Frame", nil, ns.displayRoot)
+    button:SetFrameStrata("MEDIUM")
+    button:SetClampedToScreen(true)
+    button:SetMovable(true)
     button:EnableMouse(true)
     button:RegisterForDrag("LeftButton")
-    button:SetScript("OnDragStart", StartDrag)
-    button:SetScript("OnDragStop", StopDrag)
+    button:SetScript("OnDragStart", StartIconDrag)
+    button:SetScript("OnDragStop", StopIconDrag)
 
     button.icon = button:CreateTexture(nil, "ARTWORK")
-    button.icon:SetAllPoints(button)
-    button.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    button.icon:SetAllPoints()
+    button.icon:SetTexCoord(.07, .93, .07, .93)
 
     button.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-    button.cooldown:SetAllPoints(button)
+    button.cooldown:SetAllPoints()
     button.cooldown:SetDrawSwipe(true)
     button.cooldown:SetReverse(true)
     if button.cooldown.SetDrawEdge then button.cooldown:SetDrawEdge(false) end
     if button.cooldown.SetDrawBling then button.cooldown:SetDrawBling(false) end
-    CreateBorder(button)
+    MakeBorder(button)
 
-    -- Keep stack count above the swipe and border.
-    local labelFrame = CreateFrame("Frame", nil, button)
-    labelFrame:SetAllPoints(button)
-    labelFrame:SetFrameLevel(button.borderFrame:GetFrameLevel() + 1)
-    button.stack = labelFrame:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+    local above = CreateFrame("Frame", nil, button)
+    above:SetAllPoints(button)
+    above:SetFrameLevel(button.borderFrame:GetFrameLevel() + 1)
+    button.stack = above:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
     button.stack:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
     button.stack:SetJustifyH("RIGHT")
     button.stack:SetTextColor(1, 1, 1)
     button.stack:SetShadowOffset(1, -1)
     button.stack:SetShadowColor(0, 0, 0, 1)
 
+    button.placeholder = button:CreateTexture(nil, "BACKGROUND")
+    button.placeholder:SetAllPoints()
+    button.placeholder:SetTexture(WHITE)
+    button.placeholder:SetVertexColor(.52, .37, .76, .4)
+    button.placeholderText = above:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    button.placeholderText:SetPoint("CENTER")
+    button.placeholderText:SetText("+")
+
     button:SetScript("OnEnter", function(self)
-        local item = self.item
-        if not item then return end
+        local entry, item = self.entry, self.item
+        if not entry then return end
+        local name = item and item.name or ns.SpellInfo(entry.spellID)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(item.name or ("Spell " .. item.entry.spellID), 1, 1, 1)
-        GameTooltip:AddLine(item.entry.kind .. "  |  " .. (item.entry.unit or "player"), .75, .75, .75)
-        GameTooltip:AddLine("Spell ID: " .. item.entry.spellID, .75, .75, .75)
-        if item.count and item.count > 1 then
+        GameTooltip:SetText(name or ("Spell " .. entry.spellID), 1, 1, 1)
+        GameTooltip:AddLine(entry.kind .. "  |  " .. (entry.unit or "player"), .75, .75, .75)
+        GameTooltip:AddLine("Spell ID: " .. entry.spellID, .75, .75, .75)
+        if item and item.count and item.count > 1 then
             GameTooltip:AddLine("Stacks / charges: " .. item.count, 1, 1, 1)
         end
-        if item.entry.kind == "PROC" and item.entry.trigger ~= "AURA" then
+        if entry.kind == "PROC" and entry.trigger ~= "AURA" then
             GameTooltip:AddLine("Combat-log estimate; not a castability check.", 1, .8, .35, true)
+        end
+        if not item and not entry.groupId then
+            GameTooltip:AddLine("Inactive — drag while unlocked.", .8, .7, 1)
         end
         GameTooltip:Show()
     end)
     button:SetScript("OnLeave", function() GameTooltip:Hide() end)
     button:Hide()
+    button.positionDirty = true
     return button
 end
 
-function ns.CreateDisplay()
-    if ns.container then return end
-    local container = CreateFrame("Frame", "IconTrackerFrame", UIParent)
-    container:SetSize(140, 36)
-    container:SetClampedToScreen(true)
-    container:SetMovable(true)
-    container:EnableMouse(true)
-    container:RegisterForDrag("LeftButton")
-    container:SetScript("OnDragStart", StartDrag)
-    container:SetScript("OnDragStop", StopDrag)
-    ns.container = container
-    ns.buttons = {}
+local function MakeGroupFrame(group)
+    local frame = CreateFrame("Frame", nil, ns.displayRoot)
+    frame:SetFrameStrata("MEDIUM")
+    frame:SetSize(140, 36)
+    frame:SetMovable(true)
+    frame:SetClampedToScreen(true)
+    frame:EnableMouse(true)
+    frame:RegisterForDrag("LeftButton")
+    frame.group = group
+    frame:SetScript("OnDragStart", function(self)
+        if self.group and not self.group.locked then self:StartMoving() end
+    end)
+    frame:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        SavePosition(self, self.group)
+    end)
+    frame.anchor = frame:CreateTexture(nil, "BACKGROUND")
+    frame.anchor:SetAllPoints()
+    frame.anchor:SetTexture(WHITE)
+    frame.anchor:SetVertexColor(.52, .37, .76, .35)
+    frame.anchorText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.anchorText:SetPoint("CENTER")
+    frame.anchorText:SetText(group.name .. " — drag to move")
+    ApplyPosition(frame, group)
+    frame:Hide()
+    return frame
+end
 
-    local anchor = container:CreateTexture(nil, "BACKGROUND")
-    anchor:SetAllPoints(container)
-    anchor:SetTexture(WHITE)
-    anchor:SetVertexColor(.52, .37, .76, .3)
-    ns.anchor = anchor
-    local anchorText = container:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    anchorText:SetPoint("CENTER", container, "CENTER")
-    anchorText:SetText("Icon — drag to move")
-    ns.anchorText = anchorText
-    ns.ApplyPosition()
+function ns.CreateDisplay()
+    if ns.displayRoot then return end
+    ns.displayRoot = CreateFrame("Frame", "IconTrackerRoot", UIParent)
+    ns.displayRoot:SetAllPoints(UIParent)
+    ns.iconFrames = {}
+    ns.groupFrames = {}
 end
 
 function ns.ApplyPosition()
-    if not ns.container or not ns.db then return end
-    ns.container:ClearAllPoints()
-    ns.container:SetPoint(ns.db.point, UIParent, ns.db.relativePoint, ns.db.x, ns.db.y)
-    ns.Layout()
-end
-
-function ns.ApplyMovability()
-    if ns.db then ns.Layout() end
-end
-
-function ns.Layout()
-    if not ns.db or not ns.container then return end
-    local count = ns.visibleCount or 0
-    local size, spacing = ns.db.size, ns.db.spacing
-    local width = count > 0 and count * size + (count - 1) * spacing or 140
-    ns.container:SetSize(width, count > 0 and size or 36)
-    ns.container:SetShown(count > 0 or not ns.db.locked)
-    ns.anchor:SetShown(count == 0 and not ns.db.locked)
-    ns.anchorText:SetShown(count == 0 and not ns.db.locked)
-    for i, button in ipairs(ns.buttons) do
-        button:SetSize(size, size)
-        button:ClearAllPoints()
-        button:SetPoint("LEFT", ns.container, "LEFT", (i - 1) * (size + spacing), 0)
-        button:SetShown(i <= count)
+    if not ns.db then return end
+    for _, group in ipairs(ns.db.groups) do
+        local frame = ns.groupFrames[group.id]
+        if frame then ApplyPosition(frame, group) end
     end
+    for _, entry in ipairs(ns.db.tracked) do
+        if not entry.groupId then
+            local frame = ns.iconFrames[entry.id]
+            if frame then ApplyPosition(frame, entry); frame.positionDirty = false end
+        end
+    end
+    ns.Refresh()
 end
 
-function ns.Draw(active)
-    if not ns.db or not ns.container then return end
-    for i = #ns.buttons + 1, #active do
-        ns.buttons[i] = MakeButton(ns.container)
-    end
-    for i, button in ipairs(ns.buttons) do
-        local item = active[i]
-        button.item = item
-        if item then
-            local color = BORDER_COLORS[item.entry.kind] or BORDER_COLORS.BUFF
-            button.icon:SetTexture(item.icon or FALLBACK)
-            for _, edge in ipairs(button.edges) do edge:SetVertexColor(color[1], color[2], color[3], .9) end
-            button.borderFrame:SetShown(ns.db.showBorder)
-            button.stack:SetText(item.count and item.count > 1 and item.count or "")
-            SetCountdown(button.cooldown)
-            if item.duration and item.duration > 0 then
-                local start = item.start or 0
-                if button.lastStart ~= start or button.lastDuration ~= item.duration then
-                    button.cooldown:SetCooldown(start, item.duration)
-                    button.lastStart, button.lastDuration = start, item.duration
-                end
-                button.cooldown:Show()
-            else
-                button.cooldown:Clear()
-                button.cooldown:Hide()
-                button.lastStart, button.lastDuration = nil, nil
+local function RenderIcon(button, entry, item, size, placeholder)
+    button.entry, button.item = entry, item
+    button:SetSize(size, size)
+    button.placeholder:SetShown(placeholder)
+    button.placeholderText:SetShown(placeholder)
+    button.icon:SetShown(item ~= nil)
+    button.borderFrame:SetShown(item ~= nil and entry.showBorder ~= false)
+    button.stack:SetText(item and entry.showStacks ~= false and item.count and item.count > 1 and item.count or "")
+    if item then
+        button.icon:SetTexture(item.icon or FALLBACK)
+        local color = BORDER_COLORS[entry.kind] or BORDER_COLORS.BUFF
+        for _, edge in ipairs(button.edges) do edge:SetVertexColor(color[1], color[2], color[3], .9) end
+        SetCountdown(button.cooldown, entry)
+        if item.duration and item.duration > 0 then
+            local start = item.start or 0
+            if button.lastEntryID ~= entry.id or button.lastStart ~= start or button.lastDuration ~= item.duration then
+                button.cooldown:SetCooldown(start, item.duration)
+                button.lastEntryID, button.lastStart, button.lastDuration = entry.id, start, item.duration
             end
+            button.cooldown:Show()
         else
             button.cooldown:Clear()
             button.cooldown:Hide()
-            button.lastStart, button.lastDuration = nil, nil
+            button.lastEntryID, button.lastStart, button.lastDuration = nil, nil, nil
+        end
+    else
+        button.cooldown:Clear()
+        button.cooldown:Hide()
+        button.lastEntryID, button.lastStart, button.lastDuration = nil, nil, nil
+    end
+end
+
+local function GetIcon(entry)
+    local button = ns.iconFrames[entry.id]
+    if not button then
+        button = MakeIcon()
+        ns.iconFrames[entry.id] = button
+    end
+    return button
+end
+
+local function DrawSolo(entry, item)
+    local button = GetIcon(entry)
+    if button:GetParent() ~= ns.displayRoot then
+        button:SetParent(ns.displayRoot)
+        button.positionDirty = true
+    end
+    button.groupFrame = nil
+    if button.positionDirty then
+        ApplyPosition(button, entry)
+        button.positionDirty = false
+    end
+    local visible = item ~= nil or (entry.enabled and not entry.locked)
+    if visible then RenderIcon(button, entry, item, entry.size or 36, item == nil) end
+    button:SetShown(visible)
+end
+
+local function Offset(extra, align)
+    if align == "START" then return 0 end
+    if align == "END" then return extra end
+    return extra / 2
+end
+
+local function DrawGroup(group, active)
+    local frame = ns.groupFrames[group.id]
+    if not frame then
+        frame = MakeGroupFrame(group)
+        ns.groupFrames[group.id] = frame
+    end
+    frame.group = group -- Resetting the development DB may reuse a group ID.
+    local occupied, visibleCount = {}, 0
+    for _, id in ipairs(group.members) do
+        local entry = ns.FindEntry(id)
+        if entry and entry.enabled then
+            local item = active[id]
+            if item then visibleCount = visibleCount + 1 end
+            if item or group.layout == "FIXED" then
+                occupied[#occupied + 1] = { entry = entry, item = item,
+                    size = group.sizeMode == "UNIFORM" and group.groupSize or entry.size or 36 }
+            end
         end
     end
-    ns.visibleCount = #active
-    ns.Layout()
+    local horizontal = group.orientation ~= "VERTICAL"
+    local spacing = group.spacing or 0
+    local totalMain, maxCross = 0, 0
+    for _, slot in ipairs(occupied) do
+        totalMain = totalMain + slot.size
+        if slot.size > maxCross then maxCross = slot.size end
+    end
+    if #occupied > 1 then totalMain = totalMain + spacing * (#occupied - 1) end
+    local width = horizontal and totalMain or maxCross
+    local height = horizontal and maxCross or totalMain
+    if visibleCount == 0 then
+        width, height = 140, 36
+    end
+    frame:SetSize(math.max(1, width), math.max(1, height))
+    frame:EnableMouse(not group.locked)
+    frame.anchor:SetShown(visibleCount == 0 and not group.locked)
+    frame.anchorText:SetShown(visibleCount == 0 and not group.locked)
+    frame.anchorText:SetText(group.name .. " — drag to move")
+    frame:SetShown(visibleCount > 0 or not group.locked)
+    local cursor = 0
+    for _, slot in ipairs(occupied) do
+        local button = GetIcon(slot.entry)
+        if button:GetParent() ~= frame then button:SetParent(frame) end
+        button.groupFrame = frame
+        RenderIcon(button, slot.entry, slot.item, slot.size, false)
+        button:ClearAllPoints()
+        if horizontal then
+            button:SetPoint("TOPLEFT", frame, "TOPLEFT", cursor, -Offset(maxCross - slot.size, group.align))
+        else
+            button:SetPoint("TOPLEFT", frame, "TOPLEFT", Offset(maxCross - slot.size, group.align), -cursor)
+        end
+        button.positionDirty = true -- Keep the old solo position for detaching later.
+        button:SetShown(slot.item ~= nil)
+        cursor = cursor + slot.size + spacing
+    end
+end
+
+function ns.Draw(items)
+    if not ns.db or not ns.displayRoot then return end
+    local active = {}
+    for _, item in ipairs(items) do active[item.entry.id] = item end
+    for _, button in pairs(ns.iconFrames) do button:Hide() end
+    for _, frame in pairs(ns.groupFrames) do frame:Hide() end
+    for _, entry in ipairs(ns.db.tracked) do
+        if entry.enabled and not entry.groupId then DrawSolo(entry, active[entry.id]) end
+    end
+    for _, group in ipairs(ns.db.groups) do DrawGroup(group, active) end
+    -- Empty test mode previews have no saved spell entries or groups.
+    if ns.testMode and #ns.db.tracked == 0 then
+        for _, item in ipairs(items) do DrawSolo(item.entry, item) end
+    end
 end
