@@ -4,7 +4,7 @@ Standalone experimental Spell React tracker for WoW TBC Classic Anniversary (Int
 
 ## Install
 
-**Back up your existing Icon directory and SavedVariables.** Extract the `Icon` folder into `_anniversary_/Interface/AddOns/`, replacing the *folder* from the 0.5.3 pilot (the two builds have the same add-on name and cannot run together). `/reload` after installing. The pilot's `IconDB` is never modified; the prototype uses `IconDBv1`.
+Extract the `Icon` folder into `_anniversary_/Interface/AddOns/`, replacing the previous build, then run `/reload`. The addon uses `IconDB`. An incompatible database is replaced with fresh settings.
 
 ## Commands
 
@@ -26,7 +26,7 @@ No external libraries. No dependencies on action-bar buttons, action slots or ma
 ## Structure
 
 - `Tracking.lua` — candidate IDs, metadata lookup, Spell ID reactive predicate.
-- `Database.lua` — standalone `IconDBv1` store and tracked-entry commands.
+- `Database.lua` — standalone `IconDB` store and tracked-entry commands.
 - `Display.lua` — lightweight independent movable icon row.
 - `Core.lua` — initialization, events, refresh, diagnostics, slash commands.
 

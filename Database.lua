@@ -2,23 +2,18 @@ local _, ns = ...
 
 local SCHEMA = 1
 
--- Never edit IconDB (the 0.5.3 pilot's SavedVariables) in this build.
 function ns.InitDatabase()
-    if type(IconDBv1) ~= "table" then
-        IconDBv1 = {
+    if type(IconDB) ~= "table" or IconDB.schemaVersion ~= SCHEMA then
+        IconDB = {
             schemaVersion = SCHEMA,
             tracked = {},
             x = 0, y = -140, locked = true,
         }
     end
-    if IconDBv1.schemaVersion ~= SCHEMA then
-        ns.Print("SavedVariables schema differs: no changes made. Back up IconDBv1.")
-        return false
-    end
-    if type(IconDBv1.tracked) ~= "table" then IconDBv1.tracked = {} end
+    if type(IconDB.tracked) ~= "table" then IconDB.tracked = {} end
 
     local clean, seen = {}, {}
-    for _, value in ipairs(IconDBv1.tracked) do
+    for _, value in ipairs(IconDB.tracked) do
         local id = tonumber(value)
         if id and id > 0 and id == math.floor(id)
             and ns.reactiveSpells[id] and not seen[id] then
@@ -26,11 +21,11 @@ function ns.InitDatabase()
             clean[#clean + 1] = id
         end
     end
-    IconDBv1.tracked = clean
-    if type(IconDBv1.x) ~= "number" then IconDBv1.x = 0 end
-    if type(IconDBv1.y) ~= "number" then IconDBv1.y = -140 end
-    IconDBv1.locked = IconDBv1.locked ~= false
-    ns.db = IconDBv1
+    IconDB.tracked = clean
+    if type(IconDB.x) ~= "number" then IconDB.x = 0 end
+    if type(IconDB.y) ~= "number" then IconDB.y = -140 end
+    IconDB.locked = IconDB.locked ~= false
+    ns.db = IconDB
     return true
 end
 

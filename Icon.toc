@@ -5,7 +5,7 @@
 ## Category: Combat
 ## Notes: Standalone Spell React tracker. Type /icon for commands.
 ## IconTexture: Interface\Icons\Ability_Warrior_SavageBlow
-## SavedVariables: IconDBv1
+## SavedVariables: IconDB
 
 Tracking.lua
 Database.lua
