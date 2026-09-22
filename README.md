@@ -1,38 +1,40 @@
-## v0.5.1 — Classic dropdown fix
-
-- Give each Blizzard UIDropDownMenuTemplate a unique global frame name. Classic uses the name to enable/disable the control; anonymous dropdowns caused a Lua error when opening `/icon`.
-- No settings reset is required. Reload after replacing the addon files.
-
 # Icon
 
 Standalone icon tracker by Hooch for **WoW TBC Classic Anniversary (Interface 20506)**.
 
-## v0.5.0 — Dropdowns and Cooldown
+## Install / update
 
-- The Type menu offers **Buff, Debuff, Cooldown**. Old Proc / Overpower / Counterattack combat-log tracking has been removed; Reactive will be redesigned in a separate update.
-- Type, Unit and Caster use Blizzard dropdown menus in the main Spells form, group > Add spell > New spell, and individual spell settings.
-- **Cooldown** tracks a *known player ability* via the spell cooldown API. Unit and Caster do not apply to it and are disabled. Its individual **Display mode** defaults to **Ready**: show the icon when the ability is off cooldown and hide it while recovering. **On Cooldown** reverses visibility and shows a native cooldown swipe with optional Blizzard / OmniCC numbers.
-- Matching GCD-only cooldowns are ignored. Short cooldowns are also suppressed when the GCD API is unavailable to prevent GCD flicker; in-game verification is recommended for unusual short-cooldown spells.
-- In a group, Cooldown icons obey the group's existing Compact or Fixed positioning and retain per-icon size/border/countdown settings.
-- Existing Buff, Debuff and group settings remain; obsolete Proc entries are deleted from tracked spells and their groups on first load. **Back up SavedVariables before updating if you wish to preserve the old Proc settings for reference.**
+Extract the ZIP with `Icon.toc` at `C:\Users\GAME\Documents\Icon\Icon.toc`, or install it into your WoW `_anniversary_\Interface\AddOns\Icon` directory. If you use a directory junction, replace the files in **Documents**; keep the junction in place. Then enter `/reload` and `/icon`.
 
-## Installation
+## v0.5.2 — Cooldown display modes
 
-Extract the ZIP so `Icon.toc` is at `C:\Users\GAME\Documents\Icon\Icon.toc` (or your WoW `_anniversary_\Interface\AddOns\Icon` directory). If you use a directory junction, update files in the Documents folder; do not replace the junction. Enter `/reload` and then `/icon`.
+Add a learned player ability with **Type: Cooldown**. Each new entry defaults to **On Cooldown**. Open the spell's individual settings to choose **Display mode**:
 
-## Current interface
+| Display mode | Ability ready | Ability recovering |
+| --- | --- | --- |
+| **On Cooldown** | Hidden | Visible with native cooldown swipe and optional numeric countdown |
+| **Ready** | Visible without a timer | Hidden |
+| **Always** | Visible without a timer | Visible with native cooldown swipe and optional numeric countdown |
 
-- **Spells**: add a numeric Spell ID and choose Type, Unit and Caster. Left-click a spell to edit, right-click for actions: Edit spell, Move to group, Start/Stop test, Unlock/Lock position, Disable/Enable and Delete spell. Deleting a spell requires confirmation.
-- **Groups**: create a group, optionally name it; right-click for Edit group, Add spell, Start/Stop test, Unlock/Lock position, Rename, and Add/Change Group Icon. Group icon defaults to the question-mark and can be customized by Icon ID.
-- **Add spell** inside a group: choose existing Solo or other-group spells (move, don't duplicate) or create new ones directly inside the group. Newly added spells can be edited individually.
-- **Inside a group**: 24px spell textures, click / right-click actions and grip-based reorder; group layout includes Horizontal/Vertical, Compact/Fixed, alignment, spacing and individual/uniform size. Deleting a group sends its spells back to Solo.
-- Native aura duration swipe; optional Blizzard or OmniCC cooldown count; individual stacks/charges display for auras. Cooldown tracking here does not independently model multi-charge recharge.
+- **Display mode is only in the individual spell settings**, not either Add spell form. Unit and Caster are hidden for Cooldown because this version reads the **player's** own spell cooldown.
+- A spell's **Cooldown Count** option controls its numeric timer (Blizzard or OmniCC). Swipe remains visible when the spell is recovering. For Ready, countdown is not applicable.
+- Matching global-cooldown-only responses are ignored; the addon refreshes on spell-cooldown events and when cooldowns expire. Existing Cooldown display modes and Buff/Debuff/group settings are kept; no reset is needed.
+- This version does not separately model charge-based cooldowns or the estimated cooldowns of other players. Actual API behavior must be checked in WoW, especially for spells with unusual short cooldowns or modifiers.
+
+## Interface
+
+- **Spells**: add Spell ID as Buff, Debuff or Cooldown. Left-click a tracked spell to edit; right-click for Edit, Move to group, Start/Stop test, Unlock/Lock, Disable/Enable and Delete. Deletion requires confirmation.
+- **Buff / Debuff**: choose player, target, focus or pet and Caster Any/Mine. Aura durations, stacks and charges use the native icon UI.
+- **Groups**: create an optionally named group, assign or move existing spells, or add new spells directly to that group. Group actions are on right-click. The group's optional Icon ID affects only its options-list icon.
+- **Inside a group**: click/right-click members for spell actions; drag the `::` grip to reorder on the current page. Layout supports Horizontal/Vertical, Compact/Fixed, alignment, spacing and individual/uniform icon sizes.
+- Per-icon settings: size, border, cooldown count, stacks (for auras) and solo position. An unlocked group moves as one unit. Deleting a group returns its spells to Solo.
+- Reactive / old Proc tracking is **not** implemented; it will be redesigned separately.
 
 ## Commands
 
-- `/icon` — toggle options.
+- `/icon` — open options.
 - `/icon test` — toggle global preview.
-- `/icon lock` / `/icon unlock` — lock/unlock all Solo icons and groups.
+- `/icon lock` / `/icon unlock` — lock/unlock all solo icons and groups.
 - `/icon reset` — erase all tracked spells, groups and settings.
 
-**Note:** Neither this package nor its Lua runtime has been verified on a live TBC Anniversary client; test actual cooldown behavior in-game before relying on it in PvP.
+**Development build:** Not yet verified in a live WoW client. Back up SavedVariables before trying a development version if your existing setup matters.

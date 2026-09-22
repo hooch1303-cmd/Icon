@@ -127,7 +127,7 @@ local function MakeIcon()
         local name = item and item.name or ns.SpellInfo(entry.spellID)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(name or ("Spell " .. entry.spellID), 1, 1, 1)
-        GameTooltip:AddLine(entry.kind == "COOLDOWN" and ("Cooldown  |  " .. (entry.cooldownMode == "ON_COOLDOWN" and "On Cooldown" or "Ready"))
+        GameTooltip:AddLine(entry.kind == "COOLDOWN" and ("Cooldown  |  " .. (entry.cooldownMode == "READY" and "Ready" or entry.cooldownMode == "ALWAYS" and "Always" or "On Cooldown"))
             or (entry.kind .. "  |  " .. (entry.unit or "player")), .75, .75, .75)
         GameTooltip:AddLine("Spell ID: " .. entry.spellID, .75, .75, .75)
         if item and item.count and item.count > 1 then

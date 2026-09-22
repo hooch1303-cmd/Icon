@@ -7,7 +7,7 @@ local spellMenu, menuEntryID, addPopup, addGroupID, addInput, addStatus, addTabs
 local movePopup, moveEntryID, deletePopup, deleteEntryID, deleteLabel
 local OpenSpellMenu, OpenAddPopup, OpenMovePopup, OpenDeletePopup, RefreshAddPopup
 local addExistingPage, addSelection, addRecent, addMode = 1, {}, {}, "existing"
-local addForm = { kind = "BUFF", unit = "player", caster = "ANY", cooldownMode = "READY" }
+local addForm = { kind = "BUFF", unit = "player", caster = "ANY" }
 local addWidgets = { rows = {}, recent = {} }
 local movePage = 1
 local MOVE_PAGE_SIZE = 6
@@ -15,7 +15,7 @@ local activePage = "spells"
 local selectedEntryID, selectedGroupID
 local spellPage, groupPage, memberPage = 1, 1, 1
 local PAGE_SIZE, GROUP_PAGE_SIZE, MEMBER_PAGE_SIZE = 5, 6, 4
-local form = { kind = "BUFF", unit = "player", caster = "ANY", cooldownMode = "READY" }
+local form = { kind = "BUFF", unit = "player", caster = "ANY" }
 local widgets = { spellRows = {}, groupRows = {}, memberRows = {} }
 local dragMemberID, dragGroupID, dragTargetID
 local FALLBACK_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
@@ -93,7 +93,8 @@ end
 local TYPE_OPTIONS = { { "Buff", "BUFF" }, { "Debuff", "DEBUFF" }, { "Cooldown", "COOLDOWN" } }
 local UNIT_OPTIONS = { { "Player", "player" }, { "Target", "target" }, { "Focus", "focus" }, { "Pet", "pet" } }
 local CASTER_OPTIONS = { { "Any", "ANY" }, { "Mine", "MINE" } }
-local MODE_OPTIONS = { { "Ready", "READY" }, { "On Cooldown", "ON_COOLDOWN" } }
+local MODE_OPTIONS = { { "On Cooldown", "ON_COOLDOWN" }, { "Ready", "READY" }, { "Always", "ALWAYS" } }
+local MODE_NAMES = { ON_COOLDOWN = "On Cooldown", READY = "Ready", ALWAYS = "Always" }
 local TYPE_NAMES = { BUFF = "Buff", DEBUFF = "Debuff", COOLDOWN = "Cooldown" }
 
 -- Standard Blizzard dropdown (not a button cycling through its values).
@@ -175,11 +176,15 @@ end
 
 local function RefreshForm()
     widgets.formKind:Sync()
-    widgets.formUnit:Sync(form.kind ~= "COOLDOWN")
-    widgets.formCaster:Sync(form.kind ~= "COOLDOWN")
-    widgets.formCooldown:SetShown(form.kind == "COOLDOWN")
-    widgets.formCooldown.caption:SetShown(form.kind == "COOLDOWN")
-    if form.kind == "COOLDOWN" then widgets.formCooldown:Sync() end
+    local usesAura = form.kind ~= "COOLDOWN"
+    widgets.formUnit:SetShown(usesAura)
+    widgets.formUnit.caption:SetShown(usesAura)
+    widgets.formCaster:SetShown(usesAura)
+    widgets.formCaster.caption:SetShown(usesAura)
+    if usesAura then
+        widgets.formUnit:Sync()
+        widgets.formCaster:Sync()
+    end
 end
 
 local function SetForm(field, value)
@@ -195,7 +200,7 @@ local function AddSpell()
     end
     local ok, message = ns.AddEntry({
         spellID = id, kind = form.kind, unit = form.unit, caster = form.caster,
-        cooldownMode = form.cooldownMode, enabled = true,
+        enabled = true,
     })
     SetStatus(statusText, message, not ok)
     if ok then
@@ -235,8 +240,6 @@ local function BuildSpells(pane)
         function() return form.unit end, function(v) SetForm("unit", v) end)
     widgets.formCaster = Dropdown(pane, 414, -52, 145, "Caster", CASTER_OPTIONS,
         function() return form.caster end, function(v) SetForm("caster", v) end)
-    widgets.formCooldown = Dropdown(pane, 20, -85, 240, "Display mode", MODE_OPTIONS,
-        function() return form.cooldownMode end, function(v) SetForm("cooldownMode", v) end)
     Button(pane, "Add", 414, -85, 145, 26, AddSpell)
     statusText = Label(pane, "", 20, -120, 530, "GameFontHighlightSmall")
     Label(pane, "Tracked spells — left-click to edit, right-click for actions", 20, -152, 550)
@@ -574,11 +577,15 @@ end
 
 local function RefreshAddForm()
     addWidgets.kind:Sync()
-    addWidgets.unit:Sync(addForm.kind ~= "COOLDOWN")
-    addWidgets.caster:Sync(addForm.kind ~= "COOLDOWN")
-    addWidgets.cooldown:SetShown(addForm.kind == "COOLDOWN")
-    addWidgets.cooldown.caption:SetShown(addForm.kind == "COOLDOWN")
-    if addForm.kind == "COOLDOWN" then addWidgets.cooldown:Sync() end
+    local usesAura = addForm.kind ~= "COOLDOWN"
+    addWidgets.unit:SetShown(usesAura)
+    addWidgets.unit.caption:SetShown(usesAura)
+    addWidgets.caster:SetShown(usesAura)
+    addWidgets.caster.caption:SetShown(usesAura)
+    if usesAura then
+        addWidgets.unit:Sync()
+        addWidgets.caster:Sync()
+    end
 end
 
 local function SetAddForm(field, value)
@@ -666,7 +673,7 @@ local function AddNewEntry()
     end
     local ok, message, newID = ns.AddEntry({
         spellID = id, kind = addForm.kind, unit = addForm.unit, caster = addForm.caster,
-        cooldownMode = addForm.cooldownMode, enabled = true,
+        enabled = true,
     })
     if not ok then
         SetStatus(addStatus, message, true)
@@ -753,8 +760,6 @@ local function BuildAddPopup()
         function() return addForm.unit end, function(v) SetAddForm("unit", v) end)
     addWidgets.caster = Dropdown(newer, 395, -33, 132, "Caster", CASTER_OPTIONS,
         function() return addForm.caster end, function(v) SetAddForm("caster", v) end)
-    addWidgets.cooldown = Dropdown(newer, 20, -69, 260, "Display mode", MODE_OPTIONS,
-        function() return addForm.cooldownMode end, function(v) SetAddForm("cooldownMode", v) end)
     addStatus = Label(newer, "", 20, -109, 508, "GameFontHighlightSmall")
     Label(newer, "Recently added — click Edit for individual settings", 20, -147, 508, "GameFontNormal")
     for i = 1, 3 do
@@ -960,8 +965,8 @@ local function ChangeEntry(field, value)
     local entry = ns.FindEntry(selectedEntryID)
     if not entry then return end
     entry[field] = value
-    if field == "kind" and value == "COOLDOWN" and entry.cooldownMode ~= "ON_COOLDOWN" then
-        entry.cooldownMode = "READY"
+    if field == "kind" and value == "COOLDOWN" and not MODE_NAMES[entry.cooldownMode] then
+        entry.cooldownMode = "ON_COOLDOWN"
     end
     ns.EntriesChanged()
 end
@@ -982,7 +987,7 @@ local function BuildEntry(pane)
         function() local e = ns.FindEntry(selectedEntryID); return e and e.caster end,
         function(v) ChangeEntry("caster", v) end)
     widgets.entryCooldown = Dropdown(pane, 20, -99, 300, "Display mode", MODE_OPTIONS,
-        function() local e = ns.FindEntry(selectedEntryID); return e and (e.cooldownMode or "READY") end,
+        function() local e = ns.FindEntry(selectedEntryID); return e and (e.cooldownMode or "ON_COOLDOWN") end,
         function(v) ChangeEntry("cooldownMode", v) end)
     widgets.entryGroup = Button(pane, "", 20, -140, 540, 29, function()
         local entry = ns.FindEntry(selectedEntryID)
@@ -1161,7 +1166,7 @@ local function RefreshSpells()
             row.name:SetText((name or "Unknown") .. " |cff9f7bff[" .. entry.spellID .. "]|r")
             local group = ns.FindGroup(entry.groupId)
             row.desc:SetText((TYPE_NAMES[entry.kind] or entry.kind) .. " · " .. (group and ("Group: " .. group.name)
-                or (entry.kind == "COOLDOWN" and (entry.cooldownMode == "ON_COOLDOWN" and "On Cooldown" or "Ready")
+                or (entry.kind == "COOLDOWN" and (MODE_NAMES[entry.cooldownMode] or "On Cooldown")
                     or (entry.unit .. " · " .. entry.caster))))
             if not entry.enabled then
                 row.desc:SetText(row.desc:GetText() .. " · Disabled")
@@ -1197,18 +1202,25 @@ local function RefreshEntry()
     widgets.entryTitle:SetText(name or "Unknown spell")
     widgets.entryID:SetText("Spell ID: " .. entry.spellID)
     widgets.entryKind:Sync()
-    widgets.entryUnit:Sync(entry.kind ~= "COOLDOWN")
-    widgets.entryCaster:Sync(entry.kind ~= "COOLDOWN")
-    widgets.entryCooldown:SetShown(entry.kind == "COOLDOWN")
-    widgets.entryCooldown.caption:SetShown(entry.kind == "COOLDOWN")
-    if entry.kind == "COOLDOWN" then widgets.entryCooldown:Sync() end
+    local usesAura = entry.kind ~= "COOLDOWN"
+    widgets.entryUnit:SetShown(usesAura)
+    widgets.entryUnit.caption:SetShown(usesAura)
+    widgets.entryCaster:SetShown(usesAura)
+    widgets.entryCaster.caption:SetShown(usesAura)
+    if usesAura then
+        widgets.entryUnit:Sync()
+        widgets.entryCaster:Sync()
+    end
+    widgets.entryCooldown:SetShown(not usesAura)
+    widgets.entryCooldown.caption:SetShown(not usesAura)
+    if not usesAura then widgets.entryCooldown:Sync() end
     local group = ns.FindGroup(entry.groupId)
     widgets.entryGroup:SetText("Group: " .. (group and group.name or "Solo") .. "   (click to change)")
     widgets.entryCount:SetChecked(entry.showCountdown)
     widgets.entryBorder:SetChecked(entry.showBorder)
     widgets.entryStacks:SetChecked(entry.showStacks)
     widgets.entryStacks:SetShown(entry.kind ~= "COOLDOWN")
-    widgets.entryCount:SetEnabled(entry.kind ~= "COOLDOWN" or entry.cooldownMode == "ON_COOLDOWN")
+    widgets.entryCount:SetEnabled(entry.kind ~= "COOLDOWN" or entry.cooldownMode ~= "READY")
     widgets.entryLock:SetChecked(group and group.locked or (not group and entry.locked))
     widgets.entryLock:SetEnabled(not group)
     widgets.entryLockLabel:SetText(group and "Lock position (controlled by group)" or "Lock position")

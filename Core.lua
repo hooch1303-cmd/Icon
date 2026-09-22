@@ -339,8 +339,9 @@ events:SetScript("OnEvent", function(_, event, ...)
                     table.remove(ns.db.tracked, i)
                 else
                     entry.trigger, entry.auraKind = nil, nil
-                    if entry.kind == "COOLDOWN" and entry.cooldownMode ~= "ON_COOLDOWN" then
-                        entry.cooldownMode = "READY"
+                    if entry.kind == "COOLDOWN" and entry.cooldownMode ~= "ON_COOLDOWN"
+                        and entry.cooldownMode ~= "READY" and entry.cooldownMode ~= "ALWAYS" then
+                        entry.cooldownMode = "ON_COOLDOWN"
                     end
                 end
             end

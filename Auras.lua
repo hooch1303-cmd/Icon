@@ -26,7 +26,8 @@ function ns.NormalizeEntry(entry)
     return {
         spellID = spellID, kind = kind, unit = unit,
         caster = entry.caster == "MINE" and "MINE" or "ANY",
-        cooldownMode = entry.cooldownMode == "ON_COOLDOWN" and "ON_COOLDOWN" or "READY",
+        cooldownMode = (entry.cooldownMode == "READY" or entry.cooldownMode == "ALWAYS")
+            and entry.cooldownMode or "ON_COOLDOWN",
         enabled = entry.enabled ~= false, groupId = nil,
         point = "CENTER", relativePoint = "CENTER", x = 0, y = -140,
         size = 36, showCountdown = true, showBorder = true,
@@ -121,17 +122,20 @@ local function CooldownDisplay(entry, now, gcdStart, gcdDuration)
         -- Spell 61304 is the GCD. Do not mistake a GCD-only response for
         -- an ability's own cooldown. Also suppress short GCD-only responses
         -- when this client's GCD lookup isn't exposed.
-        local matchesGCD = gcdStart and gcdStart > 0
+        local matchesGCD = type(gcdStart) == "number" and gcdStart > 0
+            and type(gcdDuration) == "number"
             and math.abs(started - gcdStart) < 0.12
             and math.abs(duration - gcdDuration) < 0.12
         if matchesGCD or not gcdStart or gcdStart == 0 then running = false end
     end
-    local mode = entry.cooldownMode == "ON_COOLDOWN" and "ON_COOLDOWN" or "READY"
-    if mode == "ON_COOLDOWN" then
-        if not running then return nil end
-    elseif running then
+    local mode = entry.cooldownMode or "ON_COOLDOWN"
+    if mode == "ON_COOLDOWN" and not running then
+        return nil
+    elseif mode == "READY" and running then
         return nil, expires -- Wake up when Ready should become visible.
     end
+    -- ALWAYS remains visible in both states; a running cooldown supplies
+    -- the same native swipe and numeric timer as ON_COOLDOWN.
     local name, icon = ns.SpellInfo(entry.spellID)
     return {
         entry = entry, name = name, icon = icon, count = 0,
@@ -182,7 +186,7 @@ function ns.ReadPreview(now, onlyGroupID, onlyEntryID)
     local result = {}
     for i, entry in ipairs(entries) do
         local name, icon = ns.SpellInfo(entry.spellID)
-        local duration = (entry.kind == "COOLDOWN" and entry.cooldownMode ~= "ON_COOLDOWN") and 0 or (15 + i * 8)
+        local duration = (entry.kind == "COOLDOWN" and entry.cooldownMode == "READY") and 0 or (15 + i * 8)
         result[#result + 1] = {
             entry = entry, name = (name or ("Spell " .. entry.spellID)) .. " (test)",
             icon = icon, count = entry.kind ~= "COOLDOWN" and i == 2 and 3 or 0,
