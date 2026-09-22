@@ -1,7 +1,7 @@
 ## Interface: 20506
 ## Title: Icon
 ## Author: Hooch
-## Version: 0.2.0
+## Version: 0.3.1
 ## Category: Combat
 ## Notes: Track selected buffs, debuffs and ability procs. Type /icon for options.
 ## IconTexture: Interface\Icons\Spell_Holy_SealOfWisdom

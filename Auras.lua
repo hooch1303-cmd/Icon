@@ -177,12 +177,14 @@ function ns.HandleCombatLog()
     end
 end
 
-function ns.ReadPreview(now)
+function ns.ReadPreview(now, onlyGroupID)
     local entries = {}
     for _, entry in ipairs(ns.db.tracked) do
-        if entry.enabled then entries[#entries + 1] = entry end
+        if entry.enabled and (not onlyGroupID or entry.groupId == onlyGroupID) then
+            entries[#entries + 1] = entry
+        end
     end
-    if #entries == 0 then
+    if #entries == 0 and not onlyGroupID then
         entries = {
             { id = -1, spellID = 30823, kind = "BUFF", unit = "player", auraKind = "BUFF", size = 36, point = "CENTER", relativePoint = "CENTER", x = -44, y = -140, showCountdown = true, showBorder = true, showStacks = true, locked = true },
             { id = -2, spellID = 24398, kind = "BUFF", unit = "player", auraKind = "BUFF", size = 36, point = "CENTER", relativePoint = "CENTER", x = 0, y = -140, showCountdown = true, showBorder = true, showStacks = true, locked = true },

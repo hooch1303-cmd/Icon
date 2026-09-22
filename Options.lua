@@ -1,6 +1,8 @@
 local ADDON_NAME, ns = ...
 
-local panel, panes, testButton, spellInput, groupInput, statusText, groupStatus
+local panel, panes, testButton, closeButton, spellInput, groupInput, statusText, groupStatus
+local groupMenu, menuDismiss, menuGroupID, renamePopup, renameName, renameStatus, renameSave, renameGroupID
+local iconPopup, iconInput, iconPreview, iconStatus, iconSave, iconGroupID
 local activePage = "spells"
 local selectedEntryID, selectedGroupID
 local spellPage, groupPage, memberPage = 1, 1, 1
@@ -78,7 +80,14 @@ local function CycleValue(current, options)
     return options[1]
 end
 
+local function CloseGroupMenu()
+    if groupMenu then groupMenu:Hide() end
+    if menuDismiss then menuDismiss:Hide() end
+    menuGroupID = nil
+end
+
 local function SelectPage(name)
+    CloseGroupMenu()
     activePage = name
     if ns.RefreshOptions then ns.RefreshOptions() end
 end
@@ -205,8 +214,207 @@ local function BuildSpells(pane)
     Label(pane, "Each spell has its own display and position.", 20, -433, 540, "GameFontHighlightSmall")
 end
 
+-- Rename and group icon are separate actions. The group icon only appears in
+-- the configuration list; the combat display uses each tracked spell's icon.
+local function BuildRenamePopup()
+    renamePopup = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+    renamePopup:SetSize(480, 187)
+    renamePopup:SetPoint("CENTER", panel, "CENTER")
+    renamePopup:SetFrameStrata("FULLSCREEN_DIALOG")
+    renamePopup:SetFrameLevel(panel:GetFrameLevel() + 80)
+    renamePopup:EnableMouse(true)
+    renamePopup:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    renamePopup:SetBackdropColor(.08, .08, .10, .99)
+    renamePopup:SetBackdropBorderColor(.58, .43, .78)
+    Label(renamePopup, "Rename group", 20, -15, 350, "GameFontNormalLarge")
+    Button(renamePopup, "X", 436, -12, 26, 23, function() renamePopup:Hide() end)
+    Label(renamePopup, "Name", 22, -51, 155)
+    renameName = CreateFrame("EditBox", nil, renamePopup, "InputBoxTemplate")
+    renameName:SetSize(422, 25)
+    renameName:SetPoint("TOPLEFT", 28, -75)
+    renameName:SetAutoFocus(false)
+    renameName:SetMaxLetters(30)
+    renameName:SetScript("OnEscapePressed", function(self) self:ClearFocus(); renamePopup:Hide() end)
+    renameStatus = Label(renamePopup, "", 23, -107, 440, "GameFontHighlightSmall")
+    renameSave = Button(renamePopup, "Save", 20, -145, 215, 27, function()
+        if not renameGroupID then return end
+        local ok, message = ns.RenameGroup(renameGroupID, renameName:GetText())
+        if ok then renamePopup:Hide()
+        else SetStatus(renameStatus, message, true) end
+    end)
+    Button(renamePopup, "Cancel", 245, -145, 215, 27, function() renamePopup:Hide() end)
+    renameName:SetScript("OnEnterPressed", function(self) self:ClearFocus(); renameSave:Click() end)
+    renamePopup:Hide()
+end
+
+local function OpenRename(groupID)
+    local group = ns.FindGroup(groupID)
+    if not group then return end
+    CloseGroupMenu()
+    renameGroupID = group.id
+    renameName:SetText(group.name)
+    SetStatus(renameStatus, "", false)
+    renamePopup:Show()
+    renameName:SetFocus()
+    renameName:HighlightText()
+end
+
+local function RefreshIconPreview()
+    if not iconPopup then return end
+    local value = iconInput:GetText()
+    if value == "" then
+        iconPreview:SetTexture(ns.DEFAULT_GROUP_ICON)
+        SetStatus(iconStatus, "Blank ID restores the question mark.", false)
+        iconSave:SetEnabled(true)
+        return
+    end
+    local id = tonumber(value)
+    if id and id > 0 and id == math.floor(id) then
+        iconPreview:SetTexture(id)
+        SetStatus(iconStatus, "", false)
+        iconSave:SetEnabled(true)
+    else
+        iconPreview:SetTexture(ns.DEFAULT_GROUP_ICON)
+        SetStatus(iconStatus, "Enter a positive numeric Icon ID.", true)
+        iconSave:SetEnabled(false)
+    end
+end
+
+local function BuildIconPopup()
+    iconPopup = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+    iconPopup:SetSize(480, 198)
+    iconPopup:SetPoint("CENTER", panel, "CENTER")
+    iconPopup:SetFrameStrata("FULLSCREEN_DIALOG")
+    iconPopup:SetFrameLevel(panel:GetFrameLevel() + 80)
+    iconPopup:EnableMouse(true)
+    iconPopup:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    iconPopup:SetBackdropColor(.08, .08, .10, .99)
+    iconPopup:SetBackdropBorderColor(.58, .43, .78)
+    Label(iconPopup, "Add Group Icon", 20, -15, 350, "GameFontNormalLarge")
+    Button(iconPopup, "X", 436, -12, 26, 23, function() iconPopup:Hide() end)
+    Label(iconPopup, "Custom Icon ID", 22, -58, 230)
+    iconInput = CreateFrame("EditBox", nil, iconPopup, "InputBoxTemplate")
+    iconInput:SetSize(275, 25)
+    iconInput:SetPoint("TOPLEFT", 28, -81)
+    iconInput:SetAutoFocus(false)
+    iconInput:SetNumeric(true)
+    iconInput:SetMaxLetters(10)
+    iconInput:SetScript("OnEscapePressed", function(self) self:ClearFocus(); iconPopup:Hide() end)
+    iconPreview = iconPopup:CreateTexture(nil, "ARTWORK")
+    iconPreview:SetSize(45, 45)
+    iconPreview:SetPoint("TOPLEFT", iconPopup, "TOPLEFT", 392, -60)
+    iconPreview:SetTexCoord(.07, .93, .07, .93)
+    iconStatus = Label(iconPopup, "", 23, -116, 440, "GameFontHighlightSmall")
+    iconSave = Button(iconPopup, "Save", 20, -154, 215, 27, function()
+        if not iconGroupID then return end
+        local text = iconInput:GetText()
+        local id = text ~= "" and tonumber(text) or nil
+        local ok, message = ns.SetGroupIcon(iconGroupID, id)
+        if ok then iconPopup:Hide()
+        else SetStatus(iconStatus, message, true) end
+    end)
+    Button(iconPopup, "Cancel", 245, -154, 215, 27, function() iconPopup:Hide() end)
+    iconInput:SetScript("OnTextChanged", RefreshIconPreview)
+    iconInput:SetScript("OnEnterPressed", function(self) self:ClearFocus(); if iconSave:IsEnabled() then iconSave:Click() end end)
+    iconPopup:Hide()
+end
+
+local function OpenGroupIcon(groupID)
+    local group = ns.FindGroup(groupID)
+    if not group then return end
+    CloseGroupMenu()
+    iconGroupID = group.id
+    iconInput:SetText(type(group.icon) == "number" and tostring(group.icon) or "")
+    RefreshIconPreview()
+    iconPopup:Show()
+    iconInput:SetFocus()
+    iconInput:HighlightText()
+end
+
+local function BuildGroupMenu()
+    menuDismiss = CreateFrame("Button", nil, UIParent)
+    menuDismiss:SetAllPoints(UIParent)
+    menuDismiss:SetFrameStrata("FULLSCREEN_DIALOG")
+    menuDismiss:SetFrameLevel(panel:GetFrameLevel() + 55)
+    menuDismiss:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    menuDismiss:SetScript("OnClick", CloseGroupMenu)
+    menuDismiss:Hide()
+
+    groupMenu = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    groupMenu:SetSize(224, 176)
+    groupMenu:SetFrameStrata("FULLSCREEN_DIALOG")
+    groupMenu:SetFrameLevel(menuDismiss:GetFrameLevel() + 1)
+    groupMenu:SetClampedToScreen(true)
+    groupMenu:EnableMouse(true)
+    groupMenu:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 13,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    groupMenu:SetBackdropColor(.08, .08, .10, .99)
+    groupMenu:SetBackdropBorderColor(.58, .43, .78)
+
+    local actions = {
+        { title = "Edit group", run = function(id) OpenGroup(id) end },
+        { title = "Start test", run = function(id)
+            ns.SetGroupTest(id, ns.testGroupID ~= id)
+        end },
+        { title = "Unlock position", run = function(id)
+            local group = ns.FindGroup(id)
+            if group then group.locked = not group.locked; ns.Refresh(); ns.RefreshOptions() end
+        end },
+        { title = "Rename", run = OpenRename },
+        { title = "Add Group Icon", run = OpenGroupIcon },
+    }
+    groupMenu.actions = actions
+    for i, action in ipairs(actions) do
+        local b = CreateFrame("Button", nil, groupMenu)
+        b:SetSize(208, 31)
+        b:SetPoint("TOPLEFT", 8, -8 - (i - 1) * 32)
+        b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        -- Text-only context menu: no decorative action icons.
+        b.label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        b.label:SetPoint("LEFT", b, "LEFT", 12, 0)
+        b.label:SetText(action.title)
+        b:SetScript("OnClick", function()
+            local id = menuGroupID
+            CloseGroupMenu()
+            if id and ns.FindGroup(id) then action.run(id) end
+        end)
+        action.button = b
+    end
+    groupMenu:Hide()
+end
+
+local function OpenGroupMenu(row, groupID, rowIndex)
+    local group = ns.FindGroup(groupID)
+    if not group then return end
+    menuGroupID = groupID
+    groupMenu.actions[2].button.label:SetText(ns.testGroupID == groupID and "Stop test" or "Start test")
+    groupMenu.actions[3].button.label:SetText(group.locked and "Unlock position" or "Lock position")
+    groupMenu:ClearAllPoints()
+    if rowIndex > 3 then
+        groupMenu:SetPoint("BOTTOMRIGHT", row, "TOPRIGHT", 0, -2)
+    else
+        groupMenu:SetPoint("TOPRIGHT", row, "BOTTOMRIGHT", 0, 2)
+    end
+    menuDismiss:Show()
+    groupMenu:Show()
+end
+
 local function BuildGroups(pane)
-    Label(pane, "Create group", 20, -6)
+    Label(pane, "Create group (name optional)", 20, -6)
     groupInput = CreateFrame("EditBox", nil, pane, "InputBoxTemplate")
     groupInput:SetSize(335, 25)
     groupInput:SetPoint("TOPLEFT", 25, -33)
@@ -214,26 +422,37 @@ local function BuildGroups(pane)
     groupInput:SetMaxLetters(30)
     groupInput:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     local function AddGroup()
-        local ok, message, id = ns.CreateGroup(groupInput:GetText())
+        local ok, message = ns.CreateGroup(groupInput:GetText())
         SetStatus(groupStatus, message, not ok)
         if ok then
             groupInput:SetText("")
             groupInput:ClearFocus()
             groupPage = math.ceil(#ns.db.groups / GROUP_PAGE_SIZE)
-            if id then OpenGroup(id) end
+            ns.RefreshOptions()
         end
     end
     groupInput:SetScript("OnEnterPressed", AddGroup)
     Button(pane, "Create", 412, -33, 147, 26, AddGroup)
-    groupStatus = Label(pane, "", 20, -71, 530, "GameFontHighlightSmall")
-    Label(pane, "Groups — click a group to edit", 20, -102, 530)
+    groupStatus = Label(pane, "Leave blank for Group 1, Group 2, etc.", 20, -71, 530, "GameFontHighlightSmall")
+    Label(pane, "Groups — left-click to edit, right-click for actions", 20, -102, 540)
     for i = 1, GROUP_PAGE_SIZE do
         local row = NewRow(pane, -133 - (i - 1) * 44, 540)
-        row.name = Label(row, "", 10, -5, 385, "GameFontHighlight")
-        row.desc = Label(row, "", 10, -21, 405, "GameFontHighlightSmall")
-        row.edit = Button(row, "Edit >", 420, -5, 105, 25, function()
+        row.icon = row:CreateTexture(nil, "ARTWORK")
+        row.icon:SetSize(32, 32)
+        row.icon:SetPoint("LEFT", 7, 0)
+        row.icon:SetTexCoord(.07, .93, .07, .93)
+        row.name = Label(row, "", 50, -5, 390, "GameFontHighlight")
+        row.desc = Label(row, "", 50, -21, 390, "GameFontHighlightSmall")
+        row.arrow = Label(row, ">", 513, -9, 20, "GameFontHighlight")
+        row.hit = CreateFrame("Button", nil, row)
+        row.hit:SetAllPoints(row)
+        row.hit:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        row.hit:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        row.hit:SetScript("OnClick", function(_, mouseButton)
             local group = ns.db.groups[(groupPage - 1) * GROUP_PAGE_SIZE + i]
-            if group then OpenGroup(group.id) end
+            if not group then return end
+            if mouseButton == "RightButton" then OpenGroupMenu(row, group.id, i)
+            else OpenGroup(group.id) end
         end)
         widgets.groupRows[i] = row
     end
@@ -413,7 +632,9 @@ local function RefreshGroups()
         row:SetShown(group ~= nil)
         if group then
             row.name:SetText(group.name)
-            row.desc:SetText(#group.members .. " spells · " .. group.orientation .. " · " .. group.layout)
+            row.icon:SetTexture(group.icon or ns.DEFAULT_GROUP_ICON)
+            local count = #group.members
+            row.desc:SetText(count == 0 and "Empty group" or (count .. (count == 1 and " spell" or " spells")))
         end
     end
 end
@@ -497,6 +718,16 @@ function ns.RefreshOptions()
     elseif activePage == "groups" then RefreshGroups()
     elseif activePage == "entry" then RefreshEntry()
     elseif activePage == "group" then RefreshGroup() end
+    -- The global preview belongs to Spells, not the Groups list or a group editor.
+    testButton:SetShown(activePage == "spells")
+    closeButton:ClearAllPoints()
+    if activePage == "spells" then
+        closeButton:SetPoint("TOPLEFT", panel, "TOPLEFT", 300, -600)
+        closeButton:SetSize(267, 28)
+    else
+        closeButton:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, -600)
+        closeButton:SetSize(547, 28)
+    end
     testButton:SetText(ns.testMode and "Stop test" or "Start test")
 end
 
@@ -519,7 +750,7 @@ local function BuildPanel()
     })
     panel:SetBackdropColor(.08, .08, .10, .97)
     panel:SetBackdropBorderColor(.45, .38, .60)
-    local title = Label(panel, (Meta("Title") or "Icon") .. " |cff9f7bffv" .. (Meta("Version") or "0.2.0") .. "|r", 181, -14, 275, "GameFontNormalLarge")
+    local title = Label(panel, (Meta("Title") or "Icon") .. " |cff9f7bffv" .. (Meta("Version") or "0.3.1") .. "|r", 181, -14, 275, "GameFontNormalLarge")
     title:SetJustifyH("CENTER")
     Label(panel, "Author: " .. (Meta("Author") or "Hooch"), 19, -46, 300, "GameFontHighlightSmall")
     Button(panel, "X", 550, -12, 27, 25, function() panel:Hide() end)
@@ -533,11 +764,19 @@ local function BuildPanel()
         panes[name] = body
     end
     BuildSpells(panes.spells)
+    BuildRenamePopup()
+    BuildIconPopup()
+    BuildGroupMenu()
     BuildGroups(panes.groups)
     BuildEntry(panes.entry)
     BuildGroup(panes.group)
     testButton = Button(panel, "Start test", 20, -600, 267, 28, function() ns.SetTest(not ns.testMode) end)
-    Button(panel, "Close", 300, -600, 267, 28, function() panel:Hide() end)
+    closeButton = Button(panel, "Close", 300, -600, 267, 28, function() panel:Hide() end)
+    panel:SetScript("OnHide", function()
+        CloseGroupMenu()
+        if renamePopup then renamePopup:Hide() end
+        if iconPopup then iconPopup:Hide() end
+    end)
     panel:SetScript("OnShow", ns.RefreshOptions)
     ns.RefreshOptions()
     panel:Hide()

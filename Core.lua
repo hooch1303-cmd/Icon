@@ -2,8 +2,11 @@ local ADDON_NAME, ns = ...
 local events = CreateFrame("Frame")
 ns.procWindows = {}
 ns.testMode = false
+ns.testGroupID = nil
 
-local SCHEMA = 2 -- Development build: deliberately do not migrate v0.1 saved variables.
+local SCHEMA = 2 -- Keep v0.2 tracked spells and groups.
+ns.DEFAULT_GROUP_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
+local OLD_DEFAULT_GROUP_ICON = "Interface\\Icons\\INV_Misc_Rune_01"
 local function NewDatabase()
     return { schemaVersion = SCHEMA, tracked = {}, groups = {}, nextEntryID = 1, nextGroupID = 1 }
 end
@@ -37,6 +40,17 @@ function ns.Refresh()
         active = ns.ReadPreview(now)
     else
         active, earliest = ns.ReadTracked(now)
+        local group = ns.FindGroup(ns.testGroupID)
+        if group then
+            local filtered = {}
+            for _, item in ipairs(active) do
+                if item.entry.groupId ~= group.id then filtered[#filtered + 1] = item end
+            end
+            for _, item in ipairs(ns.ReadPreview(now, group.id)) do
+                filtered[#filtered + 1] = item
+            end
+            active = filtered
+        end
     end
     ns.Draw(active)
     if earliest and C_Timer and C_Timer.After then
@@ -102,17 +116,32 @@ function ns.RemoveEntry(id)
     ns.EntriesChanged()
 end
 
-function ns.CreateGroup(name)
-    name = type(name) == "string" and name:match("^%s*(.-)%s*$") or ""
-    if name == "" then return false, "Enter a group name." end
-    if #name > 30 then return false, "Group name must be 30 characters or fewer." end
+local function TrimGroupName(name)
+    return type(name) == "string" and name:match("^%s*(.-)%s*$") or ""
+end
+
+local function AvailableGroupName(name, exceptID)
     for _, group in ipairs(ns.db.groups) do
-        if group.name:lower() == name:lower() then return false, "A group with that name exists." end
+        if group.id ~= exceptID and group.name:lower() == name:lower() then return false end
     end
+    return true
+end
+
+local function DefaultGroupName(id)
+    local n = id
+    while not AvailableGroupName("Group " .. n, id) do n = n + 1 end
+    return "Group " .. n
+end
+
+function ns.CreateGroup(name)
+    name = TrimGroupName(name)
     local id = ns.db.nextGroupID
+    if name == "" then name = DefaultGroupName(id) end
+    if #name > 30 then return false, "Group name must be 30 characters or fewer." end
+    if not AvailableGroupName(name) then return false, "A group with that name exists." end
     ns.db.nextGroupID = id + 1
     ns.db.groups[#ns.db.groups + 1] = {
-        id = id, name = name, members = {},
+        id = id, name = name, icon = ns.DEFAULT_GROUP_ICON, members = {},
         point = "CENTER", relativePoint = "CENTER", x = 0,
         y = -140 - (#ns.db.groups * 56),
         orientation = "HORIZONTAL", layout = "FIXED", align = "CENTER",
@@ -120,6 +149,31 @@ function ns.CreateGroup(name)
     }
     ns.EntriesChanged()
     return true, "Created group " .. name .. ".", id
+end
+
+function ns.RenameGroup(id, name)
+    local group = ns.FindGroup(id)
+    if not group then return false, "Group not found." end
+    name = TrimGroupName(name)
+    if name == "" then name = DefaultGroupName(group.id) end
+    if #name > 30 then return false, "Group name must be 30 characters or fewer." end
+    if not AvailableGroupName(name, id) then return false, "A group with that name exists." end
+    group.name = name
+    ns.EntriesChanged()
+    return true, "Updated " .. name .. "."
+end
+
+-- The group icon is only an icon in the options list, not a tracked aura.
+-- Passing nil restores the question-mark placeholder.
+function ns.SetGroupIcon(id, iconID)
+    local group = ns.FindGroup(id)
+    if not group then return false, "Group not found." end
+    if iconID ~= nil and (type(iconID) ~= "number" or iconID < 1 or iconID ~= math.floor(iconID)) then
+        return false, "Enter a positive numeric Icon ID."
+    end
+    group.icon = iconID or ns.DEFAULT_GROUP_ICON
+    ns.EntriesChanged()
+    return true, "Group icon updated."
 end
 
 function ns.AssignGroup(id, newGroupID)
@@ -151,6 +205,7 @@ end
 function ns.DeleteGroup(id)
     local group = ns.FindGroup(id)
     if not group then return end
+    if ns.testGroupID == id then ns.testGroupID = nil end
     for index, entryID in ipairs(group.members) do
         local entry = ns.FindEntry(entryID)
         if entry then
@@ -169,7 +224,17 @@ end
 
 function ns.SetTest(value)
     ns.testMode = value == true
+    if ns.testMode then ns.testGroupID = nil end
     ns.previewStart = ns.testMode and GetTime() or nil
+    ns.Refresh()
+    if ns.RefreshOptions then ns.RefreshOptions() end
+end
+
+function ns.SetGroupTest(id, value)
+    if value and not ns.FindGroup(id) then return end
+    ns.testGroupID = value and id or nil
+    if value then ns.testMode = false end
+    ns.previewStart = value and GetTime() or nil
     ns.Refresh()
     if ns.RefreshOptions then ns.RefreshOptions() end
 end
@@ -178,6 +243,7 @@ function ns.Reset()
     ns.db = NewDatabase()
     IconDB = ns.db
     ns.testMode = false
+    ns.testGroupID = nil
     ns.ClearProcWindows()
     ns.EntriesChanged()
 end
@@ -223,6 +289,17 @@ events:SetScript("OnEvent", function(_, event, ...)
                 IconDB = NewDatabase()
             end
             ns.db = IconDB
+            for _, group in ipairs(ns.db.groups) do
+                -- Previously unnamed groups were displayed as bare numbers.
+                if type(group.name) == "string" and group.name:match("^%d+$") then
+                    local candidate = "Group " .. group.name
+                    if AvailableGroupName(candidate, group.id) then group.name = candidate end
+                end
+                -- Replace the old automatic rune placeholder; retain chosen custom IDs.
+                if not group.icon or group.icon == OLD_DEFAULT_GROUP_ICON then
+                    group.icon = ns.DEFAULT_GROUP_ICON
+                end
+            end
             ns.CreateDisplay()
             ns.UpdateCombatRegistration()
             ns.Refresh()
