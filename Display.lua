@@ -168,15 +168,19 @@ function ns.Draw()
         end
         root.data = group
         local slots, visibleCount = {}, 0
+        local unlocked = Unlocked(group)
         for _, spellID in ipairs(group.members) do
             owned[spellID] = true
             local visible = IsVisible(spellID)
             if visible then visibleCount = visibleCount + 1 end
-            if visible or group.layout == "fixed" then
+            -- Unlocked groups show the real icon at 50% when React is inactive.
+            -- The compact/fixed distinction still applies when locked.
+            if visible or unlocked or group.layout == "fixed" then
                 local settings = ns.GetIconSettings(spellID)
                 if settings then
                     slots[#slots + 1] = {
-                        id = spellID, visible = visible,
+                        id = spellID, visible = visible or unlocked,
+                        preview = unlocked and not visible,
                         size = group.sizeMode == "uniform" and group.size or settings.size,
                     }
                 end
@@ -194,10 +198,15 @@ function ns.Draw()
             root:SetSize(math.max(18, cross), math.max(18, total))
         end
         PositionRoot(root)
+        -- Keep the small drag handle only for an empty unlocked group.
+        -- Otherwise it would cover the middle of the real icons.
+        root.handle:SetShown(unlocked and #slots == 0)
+        root.handleText:SetShown(unlocked and #slots == 0)
         local offset = -total / 2
         for _, slot in ipairs(slots) do
             local frame = ConfigureIcon(slot.id, root, slot.size)
             configured[slot.id] = true
+            if slot.preview then frame:SetAlpha(.5) end
             local crossOffset = 0
             if group.alignment == "start" then crossOffset = (cross - slot.size) / 2
             elseif group.alignment == "finish" then crossOffset = -(cross - slot.size) / 2 end
@@ -230,13 +239,18 @@ function ns.Draw()
                 root.data = settings
                 root:SetSize(settings.size, settings.size)
                 PositionRoot(root)
+                -- The icon itself is the drag surface. No purple '+' handle.
+                root.handle:Hide()
+                root.handleText:Hide()
                 local frame = ConfigureIcon(spellID, root, settings.size)
                 configured[spellID] = true
                 frame:ClearAllPoints()
                 frame:SetPoint("CENTER", root, "CENTER")
                 local visible = IsVisible(spellID)
-                frame:SetShown(visible)
-                root:SetShown(visible or Unlocked(settings))
+                local preview = not visible and Unlocked(settings)
+                frame:SetAlpha(preview and .5 or settings.alpha)
+                frame:SetShown(visible or preview)
+                root:SetShown(visible or preview)
             end
         elseif ns.soloRoots[spellID] then
             ns.soloRoots[spellID]:Hide()
